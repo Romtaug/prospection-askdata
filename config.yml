@@ -1,0 +1,75 @@
+# =====================================================================
+#  AskData - Configuration de la prospection
+#  Modifie librement ce fichier, aucune ligne de code à toucher.
+# =====================================================================
+
+targeting:
+  # Codes NAF prioritaires (format "62.01Z"). Ce sont les PME les plus
+  # susceptibles d'avoir des données à exploiter. Ajoute/retire à ta guise.
+  naf_codes:
+    - "62.01Z"   # Programmation informatique (éditeurs, SaaS, dev)
+    - "62.02A"   # Conseil en systèmes et logiciels informatiques
+    - "63.11Z"   # Traitement de données, hébergement
+    - "70.22Z"   # Conseil pour les affaires et la gestion
+    - "73.11Z"   # Agences de publicité / marketing
+    - "47.91A"   # E-commerce (vente à distance, catalogue général)
+    - "47.91B"   # E-commerce (vente à distance, catalogue spécialisé)
+    - "46.19B"   # Autres intermédiaires du commerce (négoce / distribution)
+
+  # Zone géographique. Laisse vide pour toute la France.
+  #   region      : code INSEE (84 = Auvergne-Rhône-Alpes)
+  #   departements : liste "69,38,01,42,73,74" (prioritaire sur region)
+  region: ""
+  departements: ""
+
+  # Tranches d'effectif visées (codes INSEE) : 02=3-5, 03=6-9, 11=10-19, 12=20-49
+  # NB : filtrer par effectif exclut les ~50% d'entreprises sans effectif renseigné
+  # (souvent les plus récentes). Laisse la liste vide pour élargir (le scoring gère la taille).
+  tranche_effectif:
+    - "02"
+    - "03"
+    - "11"
+    - "12"
+
+  categorie_entreprise: ""      # "" (recommandé, l'effectif suffit) ou "PME"/"ETI"/"GE"
+  max_par_naf: 100              # entreprises récupérées par code NAF
+  candidats_max: 400            # plafond de candidats à enrichir (maîtrise coût/temps)
+
+scoring:
+  # Poids des critères positifs (le total vaut ~100). Bonus additionnels, pénalités soustraites.
+  poids_secteur: 20
+  poids_taille: 20
+  poids_ca: 20
+  poids_croissance: 10
+  poids_activite_bodacc: 10
+  poids_contactable: 20
+  bonus_depot_comptes: 5
+  bonus_modification_recente: 5
+  penalite_distress: 100        # procédure collective / liquidation => exclusion
+
+  # Fourchette de chiffre d'affaires "idéale" (euros)
+  ca_min_ideal: 300000
+  ca_max_ideal: 20000000
+  # Âge d'entreprise idéal (années)
+  age_min_ideal: 2
+  age_max_ideal: 25
+  # Seuils de classement
+  seuil_tier_A: 70
+  seuil_tier_B: 50
+
+enrichissement:
+  deviner_domaine: true         # deviner le site depuis le nom (gratuit)
+  scrape_site: true             # chercher les emails sur le site (gratuit)
+  deviner_email_dirigeant: true # deviner prenom.nom@domaine (gratuit)
+  paths_a_scanner:
+    - "/"
+    - "/contact"
+    - "/nous-contacter"
+    - "/mentions-legales"
+    - "/a-propos"
+  timeout_http: 8
+
+sortie:
+  dossier: "output"
+  pousser_vers_brevo: false     # ou --push en ligne de commande
+  brevo_list_id: 0              # id de ta liste Brevo (0 = aucune liste précise)

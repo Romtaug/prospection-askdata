@@ -1,0 +1,59 @@
+name: Prospection AskData
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"        # tous les lundis à 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Nombre max de candidats à enrichir"
+        default: "300"
+      push_brevo:
+        description: "Pousser les prospects A/B vers Brevo (true/false)"
+        default: "false"
+
+permissions:
+  contents: write             # nécessaire pour committer data/seen.csv (dédup)
+
+jobs:
+  prospect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Lancer la prospection
+        env:
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+          DROPCONTACT_API_KEY: ${{ secrets.DROPCONTACT_API_KEY }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+        run: |
+          ARGS="--limit ${{ github.event.inputs.limit || '300' }}"
+          if [ "${{ github.event.inputs.push_brevo }}" = "true" ]; then
+            ARGS="$ARGS --push"
+          fi
+          echo "Commande : python prospect.py $ARGS"
+          python prospect.py $ARGS
+
+      - name: Publier les résultats (artefact téléchargeable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: prospects
+          path: output/
+          retention-days: 90
+
+      - name: Sauvegarder l'état de dédup
+        run: |
+          git config user.name "askdata-bot"
+          git config user.email "actions@github.com"
+          git add data/seen.csv
+          git commit -m "chore: maj liste dedup prospection [skip ci]" || echo "rien a committer"
+          git push || echo "push impossible (verifier les permissions)"

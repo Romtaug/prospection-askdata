@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AskData - Pipeline de prospection intelligent
-=============================================
-Construit une base de prospects B2B qualifiés à partir de sources 100% officielles :
-
+AskData - Pipeline de prospection intelligent (enrichissement maximal, 100% gratuit)
+====================================================================================
+Sources officielles :
   1. SIRENE (API Recherche d'entreprises, data.gouv)  -> ciblage NAF / région / effectif
-  2. BODACC (API DILA)                                -> signaux (dépôt comptes, modifs, création)
-                                                         + exclusion des sociétés en difficulté
-  3. Enrichissement email (cascade)                   -> site + Hunter/Dropcontact + devinette
-  4. Scoring 0-100                                    -> priorisation + tier A/B/C
-  5. Sortie                                           -> CSV + JSON + résumé Markdown, + push Brevo (option)
+  2. BODACC (API DILA)                                -> signaux + exclusion des sociétés en difficulté
+  3. Enrichissement (gratuit, sans clé) :
+       - devinette du domaine, PUIS recherche web (DuckDuckGo) si échec
+       - scraping du site : pages standard + liens contact/mentions découverts
+       - décodage des emails cachés (Cloudflare, entités HTML, "[at]/[dot]/arobase")
+       - emails de rôle (contact@, info@) et email dirigeant devinés en secours
+       - récupération du téléphone et du LinkedIn de l'entreprise
+  4. Scoring 0-100 -> tier A/B/C
+  5. Sortie -> CSV + JSON + résumé Markdown
 
-Robustesse : le nom du paramètre NAF de l'API est auto-détecté (activite_principale
-ou code_naf). Tout fonctionne sans clé payante. Les clés Hunter / Dropcontact / Brevo
-sont facultatives (variables d'environnement) et améliorent la récupération d'emails.
+Les clés Hunter / Dropcontact sont facultatives (variables d'environnement) et améliorent
+encore la récupération d'emails, mais tout fonctionne sans aucune clé.
 
-RGPD : cible B2B uniquement (intérêt légitime, régime opt-out). Chaque ligne trace la source.
-Les SIREN et emails présents dans data/suppression.csv ne ressortent jamais (respect opt-out).
-Un email seulement "deviné" n'est jamais poussé vers Brevo (protection de la réputation).
+RGPD : cible B2B (intérêt légitime, opt-out). Chaque ligne trace la source. Les SIREN et
+emails de data/suppression.csv ne ressortent jamais.
 
 Usage :
-    python prospect.py                 # run complet (config.yml)
+    python prospect.py                 # run complet
     python prospect.py --limit 150     # limite le nombre de candidats enrichis
-    python prospect.py --no-enrich     # ciblage + scoring seuls (rapide, sans email)
+    python prospect.py --no-enrich     # ciblage + scoring seuls
     python prospect.py --no-bodacc     # sans les signaux BODACC
-    python prospect.py --push          # pousse les prospects A/B (email fiable) vers Brevo
 """
 
 import os
@@ -37,7 +37,7 @@ import argparse
 import unicodedata
 import html
 import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -61,37 +61,50 @@ except Exception:
 SIRENE_URL = "https://recherche-entreprises.api.gouv.fr/search"
 BODACC_URL = ("https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/"
               "catalog/datasets/annonces-commerciales/records")
+DDG_URL = "https://html.duckduckgo.com/html/"
 HUNTER_BASE = "https://api.hunter.io/v2"
 DROPCONTACT = "https://api.dropcontact.io/batch"
-BREVO_URL = "https://api.brevo.com/v3/contacts"
 
-USER_AGENT = ("AskData-Prospect/1.1 (+https://askdata-bi.netlify.app; "
-              "contact romtaug+askdata@gmail.com)")
+USER_AGENT = ("Mozilla/5.0 (compatible; AskData-Prospect/2.0; "
+              "+https://askdata-bi.netlify.app; romtaug+askdata@gmail.com)")
 
-# Clés API facultatives (secrets GitHub / variables d'environnement)
 HUNTER_KEY = os.getenv("HUNTER_API_KEY", "").strip()
 DROPCONTACT_KEY = os.getenv("DROPCONTACT_API_KEY", "").strip()
-BREVO_KEY = os.getenv("BREVO_API_KEY", "").strip()
 
-# Nom du paramètre NAF de l'API (auto-détecté au démarrage)
-NAF_PARAM = "activite_principale"
+NAF_PARAM = "activite_principale"   # auto-détecté au démarrage
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+PHONE_RE = re.compile(r"(?<!\d)(?:\+33\s?|0033\s?|0)[1-9](?:[\s.\-]?\d{2}){4}(?!\d)")
+LINKEDIN_RE = re.compile(r"https?://[a-z]{0,3}\.?linkedin\.com/company/[A-Za-z0-9_\-%]+", re.I)
+CF_HEX = re.compile(r'data-cfemail="([0-9a-fA-F]{8,})"')
+CF_HEX2 = re.compile(r'/cdn-cgi/l/email-protection#([0-9a-fA-F]{8,})')
+_AT = r'(?:\s*\[at\]\s*|\s*\(at\)\s*|\s*\{at\}\s*|\s+arobase\s+|@)'
+_DOT = r'(?:\s*\[dot\]\s*|\s*\(dot\)\s*|\s*\{dot\}\s*|\s+point\s+|\.)'
+OBF_RE = re.compile(r'([a-z0-9._%+\-]+)' + _AT + r'([a-z0-9.\-]+)' + _DOT + r'([a-z]{2,})', re.I)
+
 ROLE_PREFIXES = ("contact", "info", "hello", "bonjour", "commercial",
                  "direction", "compta", "rh", "sav", "accueil")
+ROLE_GUESS = ("contact", "info", "bonjour", "hello")
 LEGAL_SUFFIXES = (" sas", " sasu", " sarl", " eurl", " sa ", " sci",
                   " scop", " snc", " selarl", " ei ", " eirl")
-# sources d'email "fiables" (vs devinées)
 SOURCES_FIABLES = ("site", "hunter", "dropcontact")
 STATUTS_OK = ("valid", "accept_all", "webmail", "mx_ok")
-# emails d'exemple / gabarit à ne jamais retenir
+
 PLACEHOLDER_LOCAL = {"your", "you", "name", "email", "exemple", "example", "nom",
                      "prenom", "prenom.nom", "test", "user", "username", "sample",
                      "john", "jane", "firstname", "lastname", "noreply", "no-reply",
-                     "donotreply", "votre", "vous", "mail"}
+                     "donotreply", "votre", "vous"}
 PLACEHOLDER_DOM = ("example.", "email.com", "domain.com", "yourdomain", "yourcompany",
                    "mondomaine", "monsite", "votredomaine", "sentry", "wixpress",
-                   "godaddy", "wordpress.", "sindarin")
+                   "godaddy", "wordpress.", "@2x")
+# domaines à ignorer dans la recherche web (annuaires, réseaux sociaux, etc.)
+DOMAIN_BLACKLIST = ("societe.com", "pappers.fr", "infogreffe.fr", "pagesjaunes.fr",
+                    "verif.com", "linkedin.com", "facebook.com", "twitter.com", "x.com",
+                    "instagram.com", "youtube.com", "wikipedia.org", "google.", "bing.com",
+                    "yelp.", "mappy.", "kompass.com", "manageo.fr", "bodacc", "data.gouv.fr",
+                    "indeed.", "glassdoor.", "leboncoin.fr", "score3.fr", "annuaire",
+                    "dnb.com", "usinenouvelle.com", "corporama", "ellisphere", "hellowork",
+                    "societeinfo", "pappers", "verif", "figaro", "lefigaro", "bfmtv")
 
 EFFECTIF_LABELS = {
     "NN": "non employeur", "00": "0 salarié", "01": "1-2", "02": "3-5",
@@ -104,7 +117,8 @@ EFFECTIF_MAX = {"NN": 0, "00": 0, "01": 2, "02": 5, "03": 9, "11": 19, "12": 49,
                 "51": 4999, "52": 9999, "53": 20000}
 
 session = requests.Session()
-session.headers.update({"User-Agent": USER_AGENT})
+session.headers.update({"User-Agent": USER_AGENT,
+                        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"})
 
 
 # --------------------------------------------------------------------------- #
@@ -120,7 +134,6 @@ def strip_acc(s):
 
 
 def slugify(name):
-    """Nom d'entreprise -> base de domaine plausible (sans accent ni forme juridique)."""
     n = " " + name.lower() + " "
     for suf in LEGAL_SUFFIXES:
         n = n.replace(suf, " ")
@@ -130,13 +143,18 @@ def slugify(name):
 
 
 def is_placeholder(email):
-    """Vrai si l'email est une adresse d'exemple/gabarit (your@email.com, test@...)."""
     local, _, dom = email.partition("@")
     if local in PLACEHOLDER_LOCAL:
         return True
-    if any(pp in dom for pp in PLACEHOLDER_DOM):
-        return True
-    return False
+    return any(pp in dom for pp in PLACEHOLDER_DOM)
+
+
+def norm_phone(s):
+    d = re.sub(r"[^\d+]", "", s)
+    digits = re.sub(r"\D", "", d)
+    if len(set(digits)) <= 1:      # 0000000000 etc.
+        return ""
+    return d
 
 
 def get_json(url, params=None, headers=None, timeout=15, retries=3):
@@ -156,12 +174,21 @@ def get_json(url, params=None, headers=None, timeout=15, retries=3):
     return None
 
 
+def http_get(url, cfg):
+    try:
+        r = session.get(url, timeout=cfg["enrichissement"]["timeout_http"],
+                        allow_redirects=True)
+        if r.status_code < 400 and len(r.text) > 100:
+            return r.text
+    except Exception:
+        pass
+    return None
+
+
 # --------------------------------------------------------------------------- #
-#  1. SIRENE - ciblage des entreprises
+#  1. SIRENE - ciblage
 # --------------------------------------------------------------------------- #
 def detect_naf_param(sample_naf):
-    """Certaines versions de l'API attendent 'activite_principale', d'autres 'code_naf'.
-    On teste avec un seul code NAF (sans autre filtre) et on garde celui qui répond."""
     global NAF_PARAM
     for pname in ("activite_principale", "code_naf"):
         d = get_json(SIRENE_URL, params={pname: sample_naf, "per_page": 1, "page": 1})
@@ -191,7 +218,6 @@ def sirene_search(cfg):
                 params["tranche_effectif_salarie"] = ",".join(t["tranche_effectif"])
             if t.get("categorie_entreprise"):
                 params["categorie_entreprise"] = t["categorie_entreprise"]
-
             data = get_json(SIRENE_URL, params=params)
             if not data or not data.get("results"):
                 break
@@ -242,18 +268,17 @@ def normalize_company(r, naf_query):
         "ville": siege.get("libelle_commune") or "",
         "cp": siege.get("code_postal") or "",
         "dir_prenom": dpre, "dir_nom": dnom, "dir_qualite": dqual,
-        # remplis plus tard
         "domain": "", "emails": [], "email_sources": {},
         "best_email": "", "best_source": "", "email_status": "",
+        "telephone": "", "linkedin": "",
         "bodacc": {}, "score": 0, "tier": "", "exclu": False, "raisons": [],
     }
 
 
 # --------------------------------------------------------------------------- #
-#  2. BODACC - signaux et exclusion des sociétés en difficulté
+#  2. BODACC - signaux + exclusion (vérifiée par SIREN)
 # --------------------------------------------------------------------------- #
-def bodacc_signals(siren, delay=0.25):
-    # Le SIREN apparaît parfois avec espaces dans le texte : on cherche les deux formes.
+def bodacc_signals(siren, delay=0.2):
     spaced = f"{siren[:3]} {siren[3:6]} {siren[6:]}"
     params = {"where": f'"{siren}" OR "{spaced}"', "limit": 100}
     data = get_json(BODACC_URL, params=params, timeout=20)
@@ -286,9 +311,6 @@ def bodacc_signals(siren, delay=0.25):
         jug = rec.get("jugement")
         blob = strip_acc(f"{famille} {typeavis} "
                          + (json.dumps(jug, ensure_ascii=False) if jug else ""))
-
-        # Société en difficulté -> exclusion. Toute décision de justice (jugement)
-        # ou mot-clé de procédure collective déclenche l'exclusion.
         distress_kw = ("liquidation judiciaire", "redressement judiciaire",
                        "sauvegarde", "procedure collective", "cessation des paiements",
                        "insuffisance d actif", "interdiction de gerer")
@@ -296,15 +318,12 @@ def bodacc_signals(siren, delay=0.25):
             sig["distress"] = True
             sig["distress_label"] = (extract_nature(jug) or famille
                                      or typeavis or "procédure collective")[:90]
-        # Dépôt des comptes annuels (signe d'une PME structurée)
         if rec.get("depot") or "depot" in famille or "compte" in famille:
             if not sig["depot_comptes"] or dp > (sig["depot_comptes"] or ""):
                 sig["depot_comptes"] = dp
-        # Modification (capital, dirigeant, adresse...) = activité récente
         if rec.get("modificationsgenerales") or "modif" in famille:
             if recent(dp) and (not sig["modif_recente"] or dp > sig["modif_recente"]):
                 sig["modif_recente"] = dp
-        # Création / immatriculation
         if "creation" in famille or "immatriculation" in famille:
             sig["creation"] = dp
     sig["n_events"] = matched
@@ -325,31 +344,12 @@ def extract_nature(jug):
 
 
 # --------------------------------------------------------------------------- #
-#  3. Enrichissement email (site -> Hunter -> Dropcontact -> devinette)
+#  3. Enrichissement
 # --------------------------------------------------------------------------- #
-def resolve_domain(company, cfg):
-    if not cfg["enrichissement"].get("deviner_domaine", True):
-        return ""
-    base = slugify(company["raison_sociale"] or company["nom"])
-    if not base:
-        return ""
-    words = base.split()
-    stems = {"".join(words), "-".join(words)}
-    if words and len(words[0]) >= 6:          # premier mot seul, seulement si assez distinctif
-        stems.add(words[0])
-    tlds = cfg["enrichissement"].get("tlds", ["fr", "com"])
-    for stem in stems:
-        if len(stem) < 4:
-            continue
-        for tld in tlds:
-            dom = f"{stem}.{tld}"
-            if domain_matches(dom, company, cfg):
-                return dom
-    return ""
-
-
 def domain_matches(domain, company, cfg):
     """Le domaine résout ET la page parle bien de l'entreprise (nom ou SIREN présent)."""
+    if any(b in domain for b in DOMAIN_BLACKLIST):
+        return False
     if HAS_DNS:
         ok = False
         for rtype in ("A", "MX"):
@@ -362,35 +362,139 @@ def domain_matches(domain, company, cfg):
         if not ok:
             return False
     for scheme in ("https://", "http://"):
-        try:
-            r = session.get(scheme + domain,
-                            timeout=cfg["enrichissement"]["timeout_http"],
-                            allow_redirects=True)
-        except Exception:
+        txt = http_get(scheme + domain, cfg)
+        if not txt:
             continue
-        if r.status_code >= 400 or len(r.text) < 200:
-            continue
-        txt = strip_acc(r.text)
+        low = strip_acc(txt)
         keys = [w for w in slugify(company["raison_sociale"] or company["nom"]).split()
                 if len(w) > 3]
-        if keys and any(k in txt for k in keys):
+        if keys and any(k in low for k in keys):
             return True
-        if company["siren"] in re.sub(r"\D", "", r.text):
+        if company["siren"] in re.sub(r"\D", "", txt):
             return True
         return False
     return False
 
 
-CF_HEX = re.compile(r'data-cfemail="([0-9a-fA-F]{8,})"')
-CF_HEX2 = re.compile(r'/cdn-cgi/l/email-protection#([0-9a-fA-F]{8,})')
-# emails obfusqués : "nom [at] domaine [dot] fr", "nom arobase domaine point fr"
-_AT = r'(?:\s*\[at\]\s*|\s*\(at\)\s*|\s*\{at\}\s*|\s+arobase\s+|@)'
-_DOT = r'(?:\s*\[dot\]\s*|\s*\(dot\)\s*|\s*\{dot\}\s*|\s+point\s+|\.)'
-OBF_RE = re.compile(r'([a-z0-9._%+\-]+)' + _AT + r'([a-z0-9.\-]+)' + _DOT + r'([a-z]{2,})', re.I)
+def guess_domains(company, cfg):
+    base = slugify(company["raison_sociale"] or company["nom"])
+    if not base:
+        return []
+    words = base.split()
+    stems = {"".join(words), "-".join(words)}
+    if words and len(words[0]) >= 6:
+        stems.add(words[0])
+    tlds = cfg["enrichissement"].get("tlds", ["fr", "com"])
+    out = []
+    for stem in stems:
+        if len(stem) >= 4:
+            for tld in tlds:
+                out.append(f"{stem}.{tld}")
+    return out
+
+
+def ddg_domain(company, cfg):
+    """Recherche web (DuckDuckGo) pour trouver le site quand la devinette échoue."""
+    q = f'{company["raison_sociale"] or company["nom"]} {company["ville"]}'.strip()
+    txt = None
+    try:
+        r = session.get(DDG_URL, params={"q": q, "kl": "fr-fr"},
+                        timeout=cfg["enrichissement"]["timeout_http"])
+        if r.status_code < 400:
+            txt = r.text
+    except Exception:
+        return ""
+    if not txt:
+        return ""
+    cands = [unquote(x) for x in re.findall(r'uddg=([^&"]+)', txt)]
+    cands += re.findall(r'href="(https?://[^"]+)"', txt)
+    seen = set()
+    checked = 0
+    for url in cands:
+        try:
+            dom = urlparse(url).netloc.lower()
+        except Exception:
+            continue
+        dom = dom[4:] if dom.startswith("www.") else dom
+        if not dom or dom in seen or any(b in dom for b in DOMAIN_BLACKLIST):
+            continue
+        seen.add(dom)
+        checked += 1
+        if checked > 8:
+            break
+        if domain_matches(dom, company, cfg):
+            return dom
+    return ""
+
+
+def resolve_domain(company, cfg):
+    if not cfg["enrichissement"].get("deviner_domaine", True):
+        return ""
+    for dom in guess_domains(company, cfg):
+        if domain_matches(dom, company, cfg):
+            return dom
+    if cfg["enrichissement"].get("recherche_web", True):
+        return ddg_domain(company, cfg)
+    return ""
+
+
+def discover_contact_links(domain, home_html):
+    """Trouve les liens contact/mentions/à-propos sur la page d'accueil."""
+    links = set()
+    if not HAS_BS4:
+        return links
+    try:
+        soup = BeautifulSoup(home_html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            key = strip_acc(a["href"] + " " + a.get_text())
+            if any(k in key for k in ("contact", "mention", "legal", "propos",
+                                      "about", "equipe", "team", "impressum")):
+                href = a["href"]
+                if href.startswith("http") and domain in href:
+                    links.add(href.split("#")[0])
+                elif href.startswith("/"):
+                    links.add("https://" + domain + href.split("#")[0])
+    except Exception:
+        pass
+    return set(list(links)[:6])
+
+
+def parse_page(text, domain):
+    emails, phones, linkedin = set(), set(), ""
+    t = html.unescape(text)
+    for m in EMAIL_RE.findall(t):
+        emails.add(m.lower())
+    for hx in CF_HEX.findall(text) + CF_HEX2.findall(text):
+        dec = cf_decode(hx)
+        if EMAIL_RE.fullmatch(dec):
+            emails.add(dec.lower())
+    for g1, g2, g3 in OBF_RE.findall(t):
+        cand = f"{g1}@{g2}.{g3}".lower()
+        if EMAIL_RE.fullmatch(cand):
+            emails.add(cand)
+    for m in PHONE_RE.findall(t):
+        ph = norm_phone(m)
+        if ph:
+            phones.add(ph)
+    lk = LINKEDIN_RE.search(text)
+    if lk:
+        linkedin = lk.group(0)
+    if HAS_BS4:
+        try:
+            soup = BeautifulSoup(text, "html.parser")
+            for a in soup.select('a[href^="mailto"]'):
+                addr = a.get("href", "").replace("mailto:", "").split("?")[0].strip().lower()
+                if EMAIL_RE.fullmatch(addr):
+                    emails.add(addr)
+        except Exception:
+            pass
+    emails = {e for e in emails
+              if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"))
+              and not is_placeholder(e)}
+    return emails, phones, linkedin
 
 
 def cf_decode(hexstr):
-    """Décode un email protégé par Cloudflare (XOR avec le premier octet comme clé)."""
     try:
         key = int(hexstr[:2], 16)
         return "".join(chr(int(hexstr[i:i + 2], 16) ^ key)
@@ -399,47 +503,32 @@ def cf_decode(hexstr):
         return ""
 
 
-def scrape_emails(domain, cfg):
-    found = set()
-    for path in cfg["enrichissement"]["paths_a_scanner"]:
-        for scheme in ("https://", "http://"):
-            url = urljoin(scheme + domain, path)
-            try:
-                r = session.get(url, timeout=cfg["enrichissement"]["timeout_http"],
-                                allow_redirects=True)
-            except Exception:
-                continue
-            if r.status_code >= 400:
-                continue
-            raw = r.text
-            text = html.unescape(raw)          # décode &#64; &commat; etc.
-            # 1) emails en clair
-            for m in EMAIL_RE.findall(text):
-                found.add(m.lower())
-            # 2) emails protégés par Cloudflare
-            for hx in CF_HEX.findall(raw) + CF_HEX2.findall(raw):
-                dec = cf_decode(hx)
-                if EMAIL_RE.fullmatch(dec):
-                    found.add(dec.lower())
-            # 3) emails obfusqués ([at] / [dot] / arobase / point)
-            for g1, g2, g3 in OBF_RE.findall(text):
-                cand = f"{g1}@{g2}.{g3}".lower()
-                if EMAIL_RE.fullmatch(cand):
-                    found.add(cand)
-            # 4) liens mailto
-            if HAS_BS4:
-                try:
-                    soup = BeautifulSoup(raw, "html.parser")
-                    for a in soup.select('a[href^="mailto"]'):
-                        addr = a.get("href", "").replace("mailto:", "").split("?")[0].strip().lower()
-                        if EMAIL_RE.fullmatch(addr):
-                            found.add(addr)
-                except Exception:
-                    pass
+def scrape_site(domain, cfg):
+    emails, phones, linkedin = set(), set(), ""
+    base = None
+    home = None
+    for sch in ("https://", "http://"):
+        home = http_get(sch + domain + "/", cfg)
+        if home:
+            base = sch
             break
-    return [e for e in found
-            if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"))
-            and "@2x" not in e and not is_placeholder(e)]
+    if not home:
+        return {"emails": [], "phones": [], "linkedin": ""}
+    e, p, l = parse_page(home, domain)
+    emails |= e
+    phones |= p
+    linkedin = linkedin or l
+    urls = set(discover_contact_links(domain, home))
+    for path in cfg["enrichissement"]["paths_a_scanner"]:
+        urls.add(base + domain + path)
+    for u in list(urls)[:10]:
+        txt = http_get(u, cfg)
+        if txt:
+            e, p, l = parse_page(txt, domain)
+            emails |= e
+            phones |= p
+            linkedin = linkedin or l
+    return {"emails": sorted(emails), "phones": sorted(phones), "linkedin": linkedin}
 
 
 def hunter_emails(domain, prenom, nom):
@@ -492,6 +581,10 @@ def dropcontact_email(company):
     return []
 
 
+def guess_role_emails(domain):
+    return [f"{p}@{domain}" for p in ROLE_GUESS] if domain else []
+
+
 def guess_dirigeant_email(company):
     dom = company["domain"]
     p = re.sub(r"[^a-z]", "", strip_acc(company["dir_prenom"]))
@@ -506,8 +599,6 @@ def guess_dirigeant_email(company):
 
 
 def rank_emails(sources, domain, dir_nom):
-    """Trie par fiabilité de source (fiable avant deviné, garanti) puis pertinence.
-    sources : {email: source}."""
     dn = strip_acc(dir_nom)
 
     def bonus(e):
@@ -522,13 +613,12 @@ def rank_emails(sources, domain, dir_nom):
         if "." in local:
             s += 5
         if sources.get(e, "") in ("hunter", "dropcontact"):
-            s += 3      # légère préférence à l'intérieur des sources fiables
+            s += 3
         return s
 
     def tier(e):
         return 0 if sources.get(e, "") in SOURCES_FIABLES else 1
 
-    # (tier fiable=0 avant deviné=1), puis meilleur bonus d'abord
     return sorted(sources.keys(), key=lambda e: (tier(e), -bonus(e)))
 
 
@@ -552,18 +642,23 @@ def verify_email(email, source=""):
 
 def enrich(company, cfg):
     company["domain"] = resolve_domain(company, cfg)
-    sources = {}  # email -> source (première source vue conservée)
+    sources = {}
 
     def add(emails, src):
         for e in emails:
             e = (e or "").lower().strip()
-            if e and EMAIL_RE.fullmatch(e) and e not in sources:
+            if e and EMAIL_RE.fullmatch(e) and not is_placeholder(e) and e not in sources:
                 sources[e] = src
 
     if company["domain"] and cfg["enrichissement"].get("scrape_site", True):
-        add(scrape_emails(company["domain"], cfg), "site")
+        data = scrape_site(company["domain"], cfg)
+        add(data["emails"], "site")
+        company["telephone"] = data["phones"][0] if data["phones"] else ""
+        company["linkedin"] = data["linkedin"]
     add(hunter_emails(company["domain"], company["dir_prenom"], company["dir_nom"]), "hunter")
     add(dropcontact_email(company), "dropcontact")
+    if company["domain"] and cfg["enrichissement"].get("deviner_email_role", True):
+        add(guess_role_emails(company["domain"]), "devine")
     if cfg["enrichissement"].get("deviner_email_dirigeant", True):
         add(guess_dirigeant_email(company), "devine")
 
@@ -583,19 +678,15 @@ def enrich(company, cfg):
 def score_company(c, cfg):
     w = cfg["scoring"]
     reasons = []
-
-    # Exclusion dure : société en difficulté
     if c["bodacc"].get("distress"):
         c.update(exclu=True, score=0, tier="EXCLU",
                  raisons=[f"EXCLU: {c['bodacc'].get('distress_label', 'procédure collective')}"])
         return c
 
     score = 0.0
-    # Secteur (NAF ciblé = plein score)
     score += w["poids_secteur"]
     reasons.append(f"secteur +{w['poids_secteur']}")
 
-    # Taille
     emax = EFFECTIF_MAX.get(c["effectif_code"])
     if emax is None:
         score += w["poids_taille"] * 0.4
@@ -613,7 +704,6 @@ def score_company(c, cfg):
         score += w["poids_taille"] * 0.2
         reasons.append("grande")
 
-    # Chiffre d'affaires
     ca = c["ca"]
     if ca is None:
         score += w["poids_ca"] * 0.5
@@ -628,7 +718,6 @@ def score_company(c, cfg):
         score += w["poids_ca"] * 0.5
         reasons.append("CA élevé")
 
-    # Croissance
     if ca and c["ca_prev"]:
         if ca > c["ca_prev"] * 1.05:
             score += w["poids_croissance"]
@@ -638,17 +727,13 @@ def score_company(c, cfg):
         else:
             score += w["poids_croissance"] * 0.5
 
-    # Activité récente (BODACC)
     if c["bodacc"].get("modif_recente"):
         score += w["poids_activite_bodacc"]
         reasons.append("activité récente (BODACC)")
-
-    # Bonus : dépose ses comptes
     if c["bodacc"].get("depot_comptes"):
         score += w["bonus_depot_comptes"]
         reasons.append("dépose ses comptes")
 
-    # Contactable (on valorise surtout un email FIABLE, pas un email deviné)
     if (c["best_email"] and c["best_source"] in SOURCES_FIABLES
             and c["email_status"] in STATUTS_OK):
         score += w["poids_contactable"]
@@ -662,7 +747,6 @@ def score_company(c, cfg):
     else:
         reasons.append("pas d'email")
 
-    # Âge
     try:
         age = datetime.date.today().year - int(c["date_creation"][:4])
         if w["age_min_ideal"] <= age <= w["age_max_ideal"]:
@@ -681,7 +765,7 @@ def score_company(c, cfg):
 
 
 # --------------------------------------------------------------------------- #
-#  5. État (dédup / opt-out) et sorties
+#  5. État et sorties
 # --------------------------------------------------------------------------- #
 def load_set(path, col):
     s = set()
@@ -724,8 +808,8 @@ def write_outputs(rows, cfg):
     cols = ["score", "tier", "siren", "nom", "naf", "naf_label", "effectif",
             "categorie", "date_creation", "ca", "ca_prev", "ville", "cp",
             "dirigeant", "qualite", "domain", "best_email", "email_source",
-            "email_status", "autres_emails", "signaux_bodacc", "raisons",
-            "source", "date_ajout"]
+            "email_status", "telephone", "linkedin", "autres_emails",
+            "signaux_bodacc", "raisons", "source", "date_ajout"]
     csv_path = os.path.join(outdir, f"prospects_{stamp}.csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         wr = csv.DictWriter(f, fieldnames=cols)
@@ -741,7 +825,8 @@ def write_outputs(rows, cfg):
                 "dirigeant": f"{c['dir_prenom']} {c['dir_nom']}".strip(),
                 "qualite": c["dir_qualite"], "domain": c["domain"],
                 "best_email": c["best_email"], "email_source": c["best_source"],
-                "email_status": c["email_status"],
+                "email_status": c["email_status"], "telephone": c["telephone"],
+                "linkedin": c["linkedin"],
                 "autres_emails": "; ".join(c["emails"][1:5]),
                 "signaux_bodacc": bodacc_summary(c["bodacc"]),
                 "raisons": " | ".join(c["raisons"]),
@@ -759,56 +844,28 @@ def write_summary(rows, cfg, stamp):
     a = [r for r in kept if r["tier"] == "A"]
     b = [r for r in kept if r["tier"] == "B"]
     fiables = [r for r in kept if r["best_email"] and r["best_source"] in SOURCES_FIABLES]
+    tel = [r for r in kept if r["telephone"]]
     excl = [r for r in rows if r["exclu"]]
     lines = [
         f"# Prospects AskData - {stamp}", "",
         f"- Candidats analysés : {len(rows)}",
         f"- Retenus (hors difficulté) : {len(kept)}",
         f"- Exclus (procédure collective / liquidation) : {len(excl)}",
-        f"- Avec email fiable (site/Hunter/Dropcontact) : {len(fiables)}",
+        f"- Avec email fiable : {len(fiables)}",
+        f"- Avec téléphone : {len(tel)}",
         f"- Tier A (>= {cfg['scoring']['seuil_tier_A']}) : {len(a)}",
         f"- Tier B : {len(b)}", "",
         "## Top 15", "",
-        "| Score | Tier | Entreprise | Ville | Email | Source | Signaux |",
+        "| Score | Tier | Entreprise | Ville | Email | Source | Tel |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in kept[:15]:
-        lines.append(f"| {r['score']} | {r['tier']} | {r['nom'][:32]} | "
-                     f"{r['ville']} | {r['best_email'] or '-'} | "
-                     f"{r['best_source'] or '-'} | {bodacc_summary(r['bodacc']) or '-'} |")
+        lines.append(f"| {r['score']} | {r['tier']} | {r['nom'][:30]} | {r['ville']} | "
+                     f"{r['best_email'] or '-'} | {r['best_source'] or '-'} | "
+                     f"{r['telephone'] or '-'} |")
     with open(os.path.join(cfg["sortie"]["dossier"], f"resume_{stamp}.md"),
               "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-
-
-def push_brevo(rows, cfg):
-    if not BREVO_KEY:
-        log("  ! BREVO_API_KEY absente, push ignoré")
-        return
-    list_id = cfg["sortie"].get("brevo_list_id") or 0
-    pushed = 0
-    for c in rows:
-        if c["exclu"] or c["tier"] not in ("A", "B") or not c["best_email"]:
-            continue
-        # On ne pousse JAMAIS un email seulement deviné (protection réputation d'expéditeur)
-        if c["best_source"] not in SOURCES_FIABLES and c["email_status"] != "valid":
-            continue
-        body = {"email": c["best_email"], "updateEnabled": True,
-                "attributes": {"NOM": c["dir_nom"], "PRENOM": c["dir_prenom"],
-                               "ENTREPRISE": c["nom"], "SIREN": c["siren"],
-                               "SCORE": c["score"], "VILLE": c["ville"],
-                               "NAF": c["naf"]}}
-        if list_id:
-            body["listIds"] = [int(list_id)]
-        try:
-            r = session.post(BREVO_URL, json=body,
-                             headers={"api-key": BREVO_KEY,
-                                      "Content-Type": "application/json"}, timeout=15)
-            if r.status_code in (200, 201, 204):
-                pushed += 1
-        except Exception:
-            pass
-    log(f"  Brevo : {pushed} contacts poussés (emails fiables uniquement)")
 
 
 # --------------------------------------------------------------------------- #
@@ -820,7 +877,6 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="plafond de candidats à enrichir")
     ap.add_argument("--no-enrich", action="store_true")
     ap.add_argument("--no-bodacc", action="store_true")
-    ap.add_argument("--push", action="store_true")
     args = ap.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
@@ -841,7 +897,6 @@ def main():
     companies = [c for c in companies if c["siren"] not in seen and c["siren"] not in supp_siren]
     log(f"  {len(companies)} après dédup / opt-out")
 
-    # Pré-tri (CA connu d'abord) pour respecter le plafond de candidats
     companies.sort(key=lambda c: (c["ca"] or 0), reverse=True)
     companies = companies[: cfg["targeting"]["candidats_max"]]
 
@@ -874,10 +929,8 @@ def main():
     append_seen("data/seen.csv", [c["siren"] for c in kept])
     log(f"  -> {csv_path}")
     log(f"  Retenus: {len(kept)} | Tier A: {sum(1 for c in kept if c['tier'] == 'A')} "
-        f"| email fiable: {sum(1 for c in kept if c['best_email'] and c['best_source'] in SOURCES_FIABLES)}")
-
-    if args.push or cfg["sortie"].get("pousser_vers_brevo"):
-        push_brevo(companies, cfg)
+        f"| email fiable: {sum(1 for c in kept if c['best_email'] and c['best_source'] in SOURCES_FIABLES)} "
+        f"| tel: {sum(1 for c in kept if c['telephone'])}")
 
 
 if __name__ == "__main__":

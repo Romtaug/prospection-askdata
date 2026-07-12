@@ -9,12 +9,35 @@ targeting:
   naf_codes:
     - "62.01Z"   # Programmation informatique (éditeurs, SaaS, dev)
     - "62.02A"   # Conseil en systèmes et logiciels informatiques
+    - "62.03Z"   # Gestion d'installations informatiques
+    - "62.09Z"   # Autres activités informatiques
     - "63.11Z"   # Traitement de données, hébergement
+    - "58.29C"   # Édition de logiciels applicatifs
     - "70.22Z"   # Conseil pour les affaires et la gestion
+    - "70.21Z"   # Conseil en relations publiques et communication
     - "73.11Z"   # Agences de publicité / marketing
+    - "73.12Z"   # Régie publicitaire de médias
+    - "69.20Z"   # Comptabilité, gestion, audit
+    - "71.12B"   # Ingénierie, études techniques
+    - "68.31Z"   # Agences immobilières
     - "47.91A"   # E-commerce (vente à distance, catalogue général)
     - "47.91B"   # E-commerce (vente à distance, catalogue spécialisé)
     - "46.19B"   # Autres intermédiaires du commerce (négoce / distribution)
+    - "46.90Z"   # Commerce de gros non spécialisé
+    - "49.41A"   # Transports routiers de fret interurbains (logistique)
+    - "52.29A"   # Messagerie, fret express (logistique)
+    - "45.11Z"   # Commerce de voitures et véhicules légers
+    - "73.20Z"   # Études de marché et sondages
+    - "63.12Z"   # Gestion de portails internet
+    - "63.99Z"   # Autres services d'information
+    - "66.22Z"   # Agents et courtiers d'assurances
+    - "66.19B"   # Autres activités auxiliaires de services financiers
+    - "70.10Z"   # Activités des sièges sociaux
+    - "72.19Z"   # Recherche-développement (autres sciences physiques/naturelles)
+    - "78.10Z"   # Agences de placement de main-d'œuvre (recrutement)
+    - "82.20Z"   # Activités de centres d'appels
+    - "46.51Z"   # Commerce de gros d'ordinateurs et de logiciels
+    - "47.41Z"   # Commerce de détail d'ordinateurs et de logiciels
 
   # Zone géographique. Laisse vide pour toute la France.
   #   region      : code INSEE (84 = Auvergne-Rhône-Alpes)
@@ -25,15 +48,11 @@ targeting:
   # Tranches d'effectif visées (codes INSEE) : 02=3-5, 03=6-9, 11=10-19, 12=20-49
   # NB : filtrer par effectif exclut les ~50% d'entreprises sans effectif renseigné
   # (souvent les plus récentes). Laisse la liste vide pour élargir (le scoring gère la taille).
-  tranche_effectif:
-    - "02"
-    - "03"
-    - "11"
-    - "12"
+  tranche_effectif: []          # VIDE = toutes les tailles (on ne rate personne, le scoring gère la taille)
 
   categorie_entreprise: ""      # "" (recommandé, l'effectif suffit) ou "PME"/"ETI"/"GE"
-  max_par_naf: 100              # entreprises récupérées par code NAF
-  candidats_max: 400            # plafond de candidats à enrichir (maîtrise coût/temps)
+  max_par_naf: 250              # entreprises récupérées par code NAF
+  candidats_max: 800            # plafond de candidats enrichis par run (max raisonnable)
 
 scoring:
   # Poids des critères positifs (le total vaut ~100). Bonus additionnels, pénalités soustraites.
@@ -81,7 +100,7 @@ enrichissement:
     - "/equipe"
     - "/notre-equipe"
   timeout_http: 6
-  workers: 8                    # nb de sites traités en parallèle (accélère fortement)
+  workers: 12                   # nb de sites traités en parallèle (accélère fortement)
 
 sortie:
   dossier: "output"

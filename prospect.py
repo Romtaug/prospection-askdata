@@ -476,6 +476,11 @@ def parse_page(text, domain):
         ph = norm_phone(m)
         if ph:
             phones.add(ph)
+    # numéros déclarés dans les données structurées (schema.org / JSON-LD)
+    for m in re.findall(r'"telephone"\s*:\s*"([^"]{6,30})"', t):
+        ph = norm_phone(m)
+        if ph and len(re.sub(r"\D", "", ph)) >= 9:
+            phones.add(ph)
     lk = LINKEDIN_RE.search(text)
     if lk:
         linkedin = lk.group(0)
@@ -486,6 +491,10 @@ def parse_page(text, domain):
                 addr = a.get("href", "").replace("mailto:", "").split("?")[0].strip().lower()
                 if EMAIL_RE.fullmatch(addr):
                     emails.add(addr)
+            for a in soup.select('a[href^="tel:"]'):
+                ph = norm_phone(a.get("href", "").replace("tel:", ""))
+                if ph and len(re.sub(r"\D", "", ph)) >= 9:
+                    phones.add(ph)
         except Exception:
             pass
     emails = {e for e in emails

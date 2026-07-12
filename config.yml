@@ -59,7 +59,9 @@ scoring:
 
 enrichissement:
   deviner_domaine: true         # deviner le site depuis le nom (gratuit)
-  scrape_site: true             # chercher les emails sur le site (gratuit)
+  recherche_web: true           # si la devinette échoue, chercher le site via DuckDuckGo (gratuit)
+  scrape_site: true             # chercher emails/tel/LinkedIn sur le site (gratuit)
+  deviner_email_role: true      # deviner contact@/info@ en secours (gratuit)
   deviner_email_dirigeant: true # deviner prenom.nom@domaine (gratuit)
   # terminaisons de domaine testées lors de la devinette
   tlds:
@@ -76,10 +78,10 @@ enrichissement:
     - "/mentions-legales"
     - "/a-propos"
     - "/qui-sommes-nous"
+    - "/equipe"
+    - "/notre-equipe"
   timeout_http: 6
   workers: 8                    # nb de sites traités en parallèle (accélère fortement)
 
 sortie:
   dossier: "output"
-  pousser_vers_brevo: false     # ou --push en ligne de commande
-  brevo_list_id: 0              # id de ta liste Brevo (0 = aucune liste précise)

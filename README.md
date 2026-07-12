@@ -42,7 +42,7 @@ Tout se règle sans toucher au code : les **codes NAF** visés, la **zone** (ré
 ## Automatisation GitHub Actions
 
 Le workflow `.github/workflows/prospect.yml` :
-- tourne **tous les lundis à 6h** (et à la demande via "Run workflow", avec un réglage de la limite),
+- tourne **tous les jours à 6h** (et à la demande via "Run workflow", avec un réglage de la limite),
 - **enregistre les résultats directement dans le repo** : `output/prospects_AAAA-MM-JJ.csv` et le résumé sont commités à chaque run (le JSON reste local). Une copie est aussi téléchargeable dans l'onglet Actions.
 - met à jour `data/seen.csv` pour **ne jamais ressortir deux fois** la même entreprise.
 
@@ -81,7 +81,11 @@ Garde aussi une courte **LIA** (analyse d'intérêt légitime) dans ton registre
 - **Recherche web (DuckDuckGo)** : améliore la découverte des sites, mais peut être limitée par moments ; en cas de blocage, le script continue sans (pas de plantage).
 - **Vitesse** : enrichissement en parallèle (`workers` dans `config.yml`) ; un run de 300 prend environ 10 minutes.
 - **Effectif** : filtrer par tranche d'effectif exclut les ~50% d'entreprises sans effectif renseigné. Vide `tranche_effectif` pour élargir.
-- **Quotas API** : SIRENE ~7 req/s, BODACC limité côté anonyme. Le script gère les 429 ; garde `candidats_max` autour de 300-400 par run.
+- **Couverture maximale** : réglé pour ~800 candidats/jour, toutes tailles, 30 secteurs. Les entreprises sont triées par CA décroissant avant enrichissement : on traite donc **les plus grosses d'abord**, tu ne rates jamais les cibles à forte valeur.
+- **Vivier fini** : la dédup fait que chaque jour il faut de NOUVELLES entreprises. Le vivier est désormais énorme (plusieurs semaines/mois de marge), mais il finira par se tarir ; élargis encore (nouveaux NAF) le moment venu.
+- **La vraie limite, c'est l'envoi, pas la génération** : tu ne peux pas envoyer 800 emails à froid par jour depuis un domaine neuf sans détruire ta délivrabilité (il faut chauffer le domaine progressivement, ~20-50/jour puis monter). Générer 800/jour te crée surtout un **stock scoré** : traite les tier A en premier, descends ensuite. Les CSV quotidiens s'accumulent dans le repo et forment ta base qui grossit.
+- **Quotas API** : SIRENE ~7 req/s, BODACC limité côté anonyme. Le script gère les 429 automatiquement.
+- **Coût GitHub Actions** : un run quotidien de ~30-45 min = ~15-22h/mois, dans le quota gratuit.
 - **NAF 2025** : la bascule officielle des codes APE est au 1er janvier 2027 ; d'ici là les codes NAF rév.2 de `config.yml` sont valides.
 
 ## Envoi

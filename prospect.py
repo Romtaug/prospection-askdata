@@ -35,6 +35,7 @@ import json
 import time
 import argparse
 import unicodedata
+import html
 import datetime
 from urllib.parse import urljoin
 
@@ -309,10 +310,12 @@ def resolve_domain(company, cfg):
     stems = {"".join(words), "-".join(words)}
     if words and len(words[0]) >= 6:          # premier mot seul, seulement si assez distinctif
         stems.add(words[0])
+    tlds = cfg["enrichissement"].get("tlds", ["fr", "com"])
     for stem in stems:
         if len(stem) < 4:
             continue
-        for dom in (f"{stem}.fr", f"{stem}.com"):
+        for tld in tlds:
+            dom = f"{stem}.{tld}"
             if domain_matches(dom, company, cfg):
                 return dom
     return ""
@@ -351,6 +354,24 @@ def domain_matches(domain, company, cfg):
     return False
 
 
+CF_HEX = re.compile(r'data-cfemail="([0-9a-fA-F]{8,})"')
+CF_HEX2 = re.compile(r'/cdn-cgi/l/email-protection#([0-9a-fA-F]{8,})')
+# emails obfusqués : "nom [at] domaine [dot] fr", "nom arobase domaine point fr"
+_AT = r'(?:\s*\[at\]\s*|\s*\(at\)\s*|\s*\{at\}\s*|\s+arobase\s+|@)'
+_DOT = r'(?:\s*\[dot\]\s*|\s*\(dot\)\s*|\s*\{dot\}\s*|\s+point\s+|\.)'
+OBF_RE = re.compile(r'([a-z0-9._%+\-]+)' + _AT + r'([a-z0-9.\-]+)' + _DOT + r'([a-z]{2,})', re.I)
+
+
+def cf_decode(hexstr):
+    """Décode un email protégé par Cloudflare (XOR avec le premier octet comme clé)."""
+    try:
+        key = int(hexstr[:2], 16)
+        return "".join(chr(int(hexstr[i:i + 2], 16) ^ key)
+                       for i in range(2, len(hexstr), 2))
+    except Exception:
+        return ""
+
+
 def scrape_emails(domain, cfg):
     found = set()
     for path in cfg["enrichissement"]["paths_a_scanner"]:
@@ -363,11 +384,25 @@ def scrape_emails(domain, cfg):
                 continue
             if r.status_code >= 400:
                 continue
-            for m in EMAIL_RE.findall(r.text):
+            raw = r.text
+            text = html.unescape(raw)          # décode &#64; &commat; etc.
+            # 1) emails en clair
+            for m in EMAIL_RE.findall(text):
                 found.add(m.lower())
+            # 2) emails protégés par Cloudflare
+            for hx in CF_HEX.findall(raw) + CF_HEX2.findall(raw):
+                dec = cf_decode(hx)
+                if EMAIL_RE.fullmatch(dec):
+                    found.add(dec.lower())
+            # 3) emails obfusqués ([at] / [dot] / arobase / point)
+            for g1, g2, g3 in OBF_RE.findall(text):
+                cand = f"{g1}@{g2}.{g3}".lower()
+                if EMAIL_RE.fullmatch(cand):
+                    found.add(cand)
+            # 4) liens mailto
             if HAS_BS4:
                 try:
-                    soup = BeautifulSoup(r.text, "html.parser")
+                    soup = BeautifulSoup(raw, "html.parser")
                     for a in soup.select('a[href^="mailto"]'):
                         addr = a.get("href", "").replace("mailto:", "").split("?")[0].strip().lower()
                         if EMAIL_RE.fullmatch(addr):
@@ -376,8 +411,9 @@ def scrape_emails(domain, cfg):
                     pass
             break
     return [e for e in found
-            if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"))
-            and "example" not in e and "sentry" not in e and "wixpress" not in e]
+            if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"))
+            and "example" not in e and "sentry" not in e
+            and "wixpress" not in e and "@2x" not in e]
 
 
 def hunter_emails(domain, prenom, nom):

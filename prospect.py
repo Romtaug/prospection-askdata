@@ -38,6 +38,7 @@ import unicodedata
 import html
 import datetime
 from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import yaml
@@ -83,6 +84,14 @@ LEGAL_SUFFIXES = (" sas", " sasu", " sarl", " eurl", " sa ", " sci",
 # sources d'email "fiables" (vs devinées)
 SOURCES_FIABLES = ("site", "hunter", "dropcontact")
 STATUTS_OK = ("valid", "accept_all", "webmail", "mx_ok")
+# emails d'exemple / gabarit à ne jamais retenir
+PLACEHOLDER_LOCAL = {"your", "you", "name", "email", "exemple", "example", "nom",
+                     "prenom", "prenom.nom", "test", "user", "username", "sample",
+                     "john", "jane", "firstname", "lastname", "noreply", "no-reply",
+                     "donotreply", "votre", "vous", "mail"}
+PLACEHOLDER_DOM = ("example.", "email.com", "domain.com", "yourdomain", "yourcompany",
+                   "mondomaine", "monsite", "votredomaine", "sentry", "wixpress",
+                   "godaddy", "wordpress.", "sindarin")
 
 EFFECTIF_LABELS = {
     "NN": "non employeur", "00": "0 salarié", "01": "1-2", "02": "3-5",
@@ -118,6 +127,16 @@ def slugify(name):
     n = strip_acc(n)
     n = re.sub(r"[^a-z0-9 ]", " ", n)
     return re.sub(r"\s+", " ", n).strip()
+
+
+def is_placeholder(email):
+    """Vrai si l'email est une adresse d'exemple/gabarit (your@email.com, test@...)."""
+    local, _, dom = email.partition("@")
+    if local in PLACEHOLDER_LOCAL:
+        return True
+    if any(pp in dom for pp in PLACEHOLDER_DOM):
+        return True
+    return False
 
 
 def get_json(url, params=None, headers=None, timeout=15, retries=3):
@@ -244,8 +263,9 @@ def bodacc_signals(siren, delay=0.25):
     if not data:
         return sig
     results = data.get("results") or []
-    sig["n_events"] = len(results)
     today = datetime.date.today()
+    siren_digits = re.sub(r"\D", "", siren)
+    matched = 0
 
     def recent(dstr, months=24):
         try:
@@ -255,6 +275,11 @@ def bodacc_signals(siren, delay=0.25):
             return False
 
     for rec in results:
+        # La recherche plein-texte peut ramener des annonces d'AUTRES sociétés.
+        # On ne garde que celles où le SIREN de l'entreprise apparaît réellement.
+        if siren_digits not in re.sub(r"\D", "", json.dumps(rec, ensure_ascii=False)):
+            continue
+        matched += 1
         dp = rec.get("dateparution") or ""
         famille = strip_acc(rec.get("familleavis_lib") or rec.get("familleavis") or "")
         typeavis = strip_acc(rec.get("typeavis_lib") or rec.get("typeavis") or "")
@@ -264,8 +289,9 @@ def bodacc_signals(siren, delay=0.25):
 
         # Société en difficulté -> exclusion. Toute décision de justice (jugement)
         # ou mot-clé de procédure collective déclenche l'exclusion.
-        distress_kw = ("liquidation", "redressement", "sauvegarde",
-                       "procedure collective", "cessation", "insuffisance d actif")
+        distress_kw = ("liquidation judiciaire", "redressement judiciaire",
+                       "sauvegarde", "procedure collective", "cessation des paiements",
+                       "insuffisance d actif", "interdiction de gerer")
         if jug or any(k in blob for k in distress_kw):
             sig["distress"] = True
             sig["distress_label"] = (extract_nature(jug) or famille
@@ -281,6 +307,7 @@ def bodacc_signals(siren, delay=0.25):
         # Création / immatriculation
         if "creation" in famille or "immatriculation" in famille:
             sig["creation"] = dp
+    sig["n_events"] = matched
     return sig
 
 
@@ -412,8 +439,7 @@ def scrape_emails(domain, cfg):
             break
     return [e for e in found
             if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"))
-            and "example" not in e and "sentry" not in e
-            and "wixpress" not in e and "@2x" not in e]
+            and "@2x" not in e and not is_placeholder(e)]
 
 
 def hunter_emails(domain, prenom, nom):
@@ -819,21 +845,23 @@ def main():
     companies.sort(key=lambda c: (c["ca"] or 0), reverse=True)
     companies = companies[: cfg["targeting"]["candidats_max"]]
 
-    if not args.no_bodacc:
-        log("2/5 Signaux BODACC...")
-        for i, c in enumerate(companies, 1):
+    def process_one(c):
+        if not args.no_bodacc:
             c["bodacc"] = bodacc_signals(c["siren"])
-            if i % 25 == 0:
-                log(f"  BODACC {i}/{len(companies)}")
-
-    if not args.no_enrich:
-        log("3/5 Enrichissement emails...")
-        for i, c in enumerate(companies, 1):
+        if not args.no_enrich:
             enrich(c, cfg)
             if c["best_email"] and c["best_email"] in supp_email:
                 c["best_email"], c["best_source"], c["email_status"] = "", "", "opt-out"
-            if i % 25 == 0:
-                log(f"  enrich {i}/{len(companies)}")
+        return c
+
+    workers = int(cfg["enrichissement"].get("workers", 8))
+    log(f"2/5 + 3/5 BODACC + enrichissement (en parallèle, {workers} threads)...")
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for _ in as_completed([ex.submit(process_one, c) for c in companies]):
+            done += 1
+            if done % 25 == 0:
+                log(f"  traité {done}/{len(companies)}")
 
     log("4/5 Scoring...")
     for c in companies:

@@ -810,45 +810,83 @@ def bodacc_summary(b):
     return "; ".join(parts)
 
 
-def write_outputs(rows, cfg):
-    outdir = cfg["sortie"]["dossier"]
-    os.makedirs(outdir, exist_ok=True)
-    stamp = datetime.date.today().isoformat()
-    cols = ["score", "tier", "siren", "nom", "naf", "naf_label", "effectif",
+CSV_COLS = ["score", "tier", "siren", "nom", "naf", "naf_label", "effectif",
             "categorie", "date_creation", "ca", "ca_prev", "ville", "cp",
             "dirigeant", "qualite", "domain", "best_email", "email_source",
             "email_status", "telephone", "linkedin", "autres_emails",
             "signaux_bodacc", "raisons", "source", "date_ajout"]
+SRC_LABEL = "SIRENE (recherche-entreprises.api.gouv.fr) + BODACC (DILA) + site web"
+
+
+def build_row(c, stamp):
+    return {
+        "score": c["score"], "tier": c["tier"], "siren": c["siren"],
+        "nom": c["nom"], "naf": c["naf"], "naf_label": c["naf_label"],
+        "effectif": EFFECTIF_LABELS.get(c["effectif_code"], c["effectif_code"]),
+        "categorie": c["categorie"], "date_creation": c["date_creation"],
+        "ca": c["ca"] or "", "ca_prev": c["ca_prev"] or "",
+        "ville": c["ville"], "cp": c["cp"],
+        "dirigeant": f"{c['dir_prenom']} {c['dir_nom']}".strip(),
+        "qualite": c["dir_qualite"], "domain": c["domain"],
+        "best_email": c["best_email"], "email_source": c["best_source"],
+        "email_status": c["email_status"], "telephone": c["telephone"],
+        "linkedin": c["linkedin"],
+        "autres_emails": "; ".join(c["emails"][1:5]),
+        "signaux_bodacc": bodacc_summary(c["bodacc"]),
+        "raisons": " | ".join(c["raisons"]),
+        "source": SRC_LABEL, "date_ajout": stamp,
+    }
+
+
+def write_outputs(rows, cfg):
+    outdir = cfg["sortie"]["dossier"]
+    os.makedirs(outdir, exist_ok=True)
+    stamp = datetime.date.today().isoformat()
+    # le CSV/JSON du jour ne contiennent que les prospects exploitables (on retire les exclus)
+    kept = [c for c in rows if not c["exclu"]]
     csv_path = os.path.join(outdir, f"prospects_{stamp}.csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
-        wr = csv.DictWriter(f, fieldnames=cols)
+        wr = csv.DictWriter(f, fieldnames=CSV_COLS)
         wr.writeheader()
-        for c in rows:
-            wr.writerow({
-                "score": c["score"], "tier": c["tier"], "siren": c["siren"],
-                "nom": c["nom"], "naf": c["naf"], "naf_label": c["naf_label"],
-                "effectif": EFFECTIF_LABELS.get(c["effectif_code"], c["effectif_code"]),
-                "categorie": c["categorie"], "date_creation": c["date_creation"],
-                "ca": c["ca"] or "", "ca_prev": c["ca_prev"] or "",
-                "ville": c["ville"], "cp": c["cp"],
-                "dirigeant": f"{c['dir_prenom']} {c['dir_nom']}".strip(),
-                "qualite": c["dir_qualite"], "domain": c["domain"],
-                "best_email": c["best_email"], "email_source": c["best_source"],
-                "email_status": c["email_status"], "telephone": c["telephone"],
-                "linkedin": c["linkedin"],
-                "autres_emails": "; ".join(c["emails"][1:5]),
-                "signaux_bodacc": bodacc_summary(c["bodacc"]),
-                "raisons": " | ".join(c["raisons"]),
-                "source": "SIRENE (recherche-entreprises.api.gouv.fr) + BODACC (DILA) + site web",
-                "date_ajout": stamp,
-            })
+        for c in kept:
+            wr.writerow(build_row(c, stamp))
     with open(os.path.join(outdir, f"prospects_{stamp}.json"), "w", encoding="utf-8") as f:
-        json.dump(rows, f, ensure_ascii=False, indent=2, default=str)
-    write_summary(rows, cfg, stamp)
+        json.dump(kept, f, ensure_ascii=False, indent=2, default=str)
+    total_master = update_master(kept, cfg, stamp)
+    log(f"  base cumulative : {total_master} prospects (prospects_master.csv)")
+    write_summary(rows, cfg, stamp, total_master)
     return csv_path
 
 
-def write_summary(rows, cfg, stamp):
+def update_master(kept, cfg, stamp):
+    """Fusionne les nouveaux prospects dans UNE base cumulative unique
+    (prospects_master.csv), dédupliquée par SIREN et triée par score décroissant.
+    C'est la base qui grossit à chaque run : les meilleurs prospects toujours en haut."""
+    master = os.path.join(cfg["sortie"]["dossier"], "prospects_master.csv")
+    existing = {}
+    if os.path.exists(master):
+        with open(master, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                if row.get("siren"):
+                    existing[row["siren"]] = row
+    for c in kept:
+        row = build_row(c, stamp)
+        prev = existing.get(c["siren"])
+        if prev:
+            row["date_ajout"] = prev.get("date_ajout") or stamp    # conserve la date de 1re entrée
+            if int(prev.get("score") or 0) > int(row["score"] or 0):
+                continue                                           # on garde la meilleure fiche
+        existing[c["siren"]] = row
+    ordered = sorted(existing.values(), key=lambda r: int(r.get("score") or 0), reverse=True)
+    with open(master, "w", newline="", encoding="utf-8-sig") as f:
+        wr = csv.DictWriter(f, fieldnames=CSV_COLS)
+        wr.writeheader()
+        for r in ordered:
+            wr.writerow(r)
+    return len(ordered)
+
+
+def write_summary(rows, cfg, stamp, total_master=0):
     kept = [r for r in rows if not r["exclu"]]
     a = [r for r in kept if r["tier"] == "A"]
     b = [r for r in kept if r["tier"] == "B"]
@@ -857,14 +895,12 @@ def write_summary(rows, cfg, stamp):
     excl = [r for r in rows if r["exclu"]]
     lines = [
         f"# Prospects AskData - {stamp}", "",
-        f"- Candidats analysés : {len(rows)}",
-        f"- Retenus (hors difficulté) : {len(kept)}",
-        f"- Exclus (procédure collective / liquidation) : {len(excl)}",
-        f"- Avec email fiable : {len(fiables)}",
-        f"- Avec téléphone : {len(tel)}",
-        f"- Tier A (>= {cfg['scoring']['seuil_tier_A']}) : {len(a)}",
-        f"- Tier B : {len(b)}", "",
-        "## Top 15", "",
+        f"- Nouveaux ce run : {len(kept)} retenus (sur {len(rows)} analysés, {len(excl)} exclus)",
+        f"- **Base cumulative totale : {total_master} prospects** (fichier prospects_master.csv)",
+        f"- Avec email fiable (ce run) : {len(fiables)}",
+        f"- Avec téléphone (ce run) : {len(tel)}",
+        f"- Tier A (>= {cfg['scoring']['seuil_tier_A']}) : {len(a)} | Tier B : {len(b)}", "",
+        "## Top 15 du jour", "",
         "| Score | Tier | Entreprise | Ville | Email | Source | Tel |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -935,7 +971,9 @@ def main():
     log("5/5 Sortie...")
     csv_path = write_outputs(companies, cfg)
     kept = [c for c in companies if not c["exclu"]]
-    append_seen("data/seen.csv", [c["siren"] for c in kept])
+    # on marque TOUTES les entreprises traitées comme vues (retenues + exclues),
+    # pour que chaque run apporte des entreprises NOUVELLES et n'en retraite aucune
+    append_seen("data/seen.csv", [c["siren"] for c in companies])
     log(f"  -> {csv_path}")
     log(f"  Retenus: {len(kept)} | Tier A: {sum(1 for c in kept if c['tier'] == 'A')} "
         f"| email fiable: {sum(1 for c in kept if c['best_email'] and c['best_source'] in SOURCES_FIABLES)} "

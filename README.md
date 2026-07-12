@@ -47,8 +47,10 @@ Tout se règle sans toucher au code : les **codes NAF** visés, la **zone** (ré
 
 Le workflow `.github/workflows/prospect.yml` :
 - tourne **tous les lundis à 6h** (et à la demande via "Run workflow"),
-- publie les résultats en **artefact téléchargeable** (onglet Actions),
+- **enregistre les résultats directement dans le repo** : le fichier `output/prospects_AAAA-MM-JJ.csv` et le résumé sont commités à chaque run (le JSON reste local). Une copie est aussi disponible en téléchargement dans l'onglet Actions.
 - met à jour `data/seen.csv` pour **ne jamais ressortir deux fois** la même entreprise.
+
+> **Important - repo privé obligatoire.** Comme les résultats (emails de prospects) sont maintenant enregistrés dans le repo, celui-ci doit rester **privé** (sinon des données personnelles seraient publiques, ce qui est interdit par le RGPD). Pense aussi à supprimer régulièrement les vieux fichiers `output/` : la donnée reste sinon dans l'historique Git, ce qui complique le respect de l'effacement et de la limite des 3 ans.
 
 Pour le lancer à la main : onglet **Actions** -> "Prospection AskData" -> **Run workflow** (tu peux régler la limite et activer le push Brevo).
 
@@ -78,6 +80,7 @@ Pense aussi à rédiger une courte **LIA** (analyse d'intérêt légitime, 1-2 p
 
 ## Robustesse et limites honnêtes
 
+- **Récupération d'emails renforcée** : le scraper lit les emails en clair, mais décode aussi ceux **protégés par Cloudflare**, écrits en **entités HTML** (`&#64;`), ou **obfusqués** ("nom [at] domaine [point] fr", "arobase", "point"). Il teste plusieurs terminaisons de domaine (.fr .com .net .io .co) et 7 pages par site. Ça augmente nettement la couverture en mode gratuit.
 - **Auto-détection du paramètre NAF** : au démarrage, le script teste `activite_principale` et `code_naf` et garde celui qui répond. Si l'API évolue, le ciblage continue de fonctionner.
 - **Confiance des emails** : chaque email est étiqueté par sa source (`site`, `hunter`, `dropcontact` = fiable ; `devine` = deviné). Un email seulement deviné ne compte quasiment pas dans le score et **n'est jamais poussé vers Brevo**, pour protéger ta réputation d'expéditeur. Contacte les emails devinés à la main, avec prudence.
 - **Devinette de domaine** (mode gratuit) : ne trouve pas 100% des sites, surtout pour les noms génériques. Les clés Hunter/Dropcontact augmentent nettement le taux. Le domaine n'est retenu que si la page mentionne le nom de l'entreprise ou son SIREN (évite les faux domaines).
@@ -89,3 +92,7 @@ Pense aussi à rédiger une courte **LIA** (analyse d'intérêt légitime, 1-2 p
 ## Enchaînement avec ton envoi
 
 Le CSV se branche directement sur ton pipeline d'emailing existant (Brevo + GitHub Actions). Deux options : soit `--push` pour créer les contacts Brevo automatiquement, soit tu importes le CSV dans une liste Brevo et tu lances ta séquence habituelle.
+
+## Pistes pour une v2 (plus tard)
+
+Une fois la prospection validée, on pourra ajouter un **scoring d'intention** : repérer les entreprises avec un besoin data visible (offres d'emploi "data analyst", stack e-commerce détectée comme Shopify ou Prestashop, croissance récente d'effectif). C'est le niveau au-dessus en priorisation, mais plus lourd à fiabiliser : à garder pour quand le socle actuel aura fait ses preuves.

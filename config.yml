@@ -61,12 +61,21 @@ enrichissement:
   deviner_domaine: true         # deviner le site depuis le nom (gratuit)
   scrape_site: true             # chercher les emails sur le site (gratuit)
   deviner_email_dirigeant: true # deviner prenom.nom@domaine (gratuit)
+  # terminaisons de domaine testées lors de la devinette
+  tlds:
+    - "fr"
+    - "com"
+    - "net"
+    - "io"
+    - "co"
   paths_a_scanner:
     - "/"
     - "/contact"
     - "/nous-contacter"
+    - "/contactez-nous"
     - "/mentions-legales"
     - "/a-propos"
+    - "/qui-sommes-nous"
   timeout_http: 8
 
 sortie:

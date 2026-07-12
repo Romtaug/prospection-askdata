@@ -50,10 +50,10 @@ jobs:
           path: output/
           retention-days: 90
 
-      - name: Sauvegarder l'état de dédup
+      - name: Enregistrer les résultats et l'état dans le repo
         run: |
           git config user.name "askdata-bot"
           git config user.email "actions@github.com"
-          git add data/seen.csv
-          git commit -m "chore: maj liste dedup prospection [skip ci]" || echo "rien a committer"
+          git add data/seen.csv output/
+          git commit -m "chore: prospects + dedup $(date +%F) [skip ci]" || echo "rien a committer"
           git push || echo "push impossible (verifier les permissions)"

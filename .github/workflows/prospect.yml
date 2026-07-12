@@ -2,12 +2,12 @@ name: Prospection AskData
 
 on:
   schedule:
-    - cron: "0 6 * * 1"        # tous les lundis à 06:00 UTC
+    - cron: "0 6 * * *"        # tous les jours à 06:00 UTC
   workflow_dispatch:
     inputs:
       limit:
         description: "Nombre max de candidats à enrichir"
-        default: "300"
+        default: "800"
 
 permissions:
   contents: write             # nécessaire pour committer data/seen.csv (dédup)
@@ -32,7 +32,7 @@ jobs:
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           DROPCONTACT_API_KEY: ${{ secrets.DROPCONTACT_API_KEY }}
         run: |
-          python prospect.py --limit ${{ github.event.inputs.limit || '300' }}
+          python prospect.py --limit ${{ github.event.inputs.limit || '800' }}
 
       - name: Publier les résultats (artefact téléchargeable)
         uses: actions/upload-artifact@v4

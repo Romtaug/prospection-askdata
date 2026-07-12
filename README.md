@@ -86,6 +86,8 @@ Pense aussi à rédiger une courte **LIA** (analyse d'intérêt légitime, 1-2 p
 - **Devinette de domaine** (mode gratuit) : ne trouve pas 100% des sites, surtout pour les noms génériques. Les clés Hunter/Dropcontact augmentent nettement le taux. Le domaine n'est retenu que si la page mentionne le nom de l'entreprise ou son SIREN (évite les faux domaines).
 - **NAF 2025** : la bascule officielle des codes APE vers NAF 2025 a lieu le **1er janvier 2027**. D'ici là, les codes NAF rév.2 de `config.yml` (62.01Z, etc.) sont valides. Après, il faudra les mettre à jour avec la table de correspondance de l'INSEE.
 - **Effectif** : filtrer par tranche d'effectif exclut les ~50% d'entreprises sans effectif renseigné. Pour élargir, vide `tranche_effectif` dans `config.yml` (le scoring gère alors la taille).
+- **BODACC fiable et rapide** : chaque annonce est vérifiée par SIREN, donc une entreprise n'est jamais exclue à cause de la procédure collective d'une AUTRE société. L'enrichissement tourne en parallèle (réglable via `workers` dans `config.yml`) : un run de 300 prend environ 10 minutes.
+- **Emails d'exemple filtrés** : les adresses gabarit laissées sur les sites (`your@email.com`, `name@example.com`, `test@...`) sont écartées automatiquement.
 - **Quotas API** : SIRENE ~7 requêtes/seconde, BODACC limité côté anonyme. Le script gère les erreurs 429 avec des pauses ; garde `candidats_max` autour de 300-400 par run.
 - **CA** : disponible seulement pour les sociétés qui déposent leurs comptes ; sinon le score reste neutre sur ce critère.
 

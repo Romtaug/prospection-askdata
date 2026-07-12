@@ -8,9 +8,6 @@ on:
       limit:
         description: "Nombre max de candidats à enrichir"
         default: "300"
-      push_brevo:
-        description: "Pousser les prospects A/B vers Brevo (true/false)"
-        default: "false"
 
 permissions:
   contents: write             # nécessaire pour committer data/seen.csv (dédup)
@@ -34,14 +31,8 @@ jobs:
         env:
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           DROPCONTACT_API_KEY: ${{ secrets.DROPCONTACT_API_KEY }}
-          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
         run: |
-          ARGS="--limit ${{ github.event.inputs.limit || '300' }}"
-          if [ "${{ github.event.inputs.push_brevo }}" = "true" ]; then
-            ARGS="$ARGS --push"
-          fi
-          echo "Commande : python prospect.py $ARGS"
-          python prospect.py $ARGS
+          python prospect.py --limit ${{ github.event.inputs.limit || '300' }}
 
       - name: Publier les résultats (artefact téléchargeable)
         uses: actions/upload-artifact@v4

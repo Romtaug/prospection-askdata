@@ -45,6 +45,6 @@ jobs:
         run: |
           git config user.name "askdata-bot"
           git config user.email "actions@github.com"
-          git add data/seen.csv output/
+          git add data/ output/
           git commit -m "chore: prospects + dedup $(date +%F) [skip ci]" || echo "rien a committer"
           git push || echo "push impossible (verifier les permissions)"

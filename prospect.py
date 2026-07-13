@@ -96,7 +96,8 @@ PLACEHOLDER_LOCAL = {"your", "you", "name", "email", "exemple", "example", "nom"
                      "donotreply", "votre", "vous"}
 PLACEHOLDER_DOM = ("example.", "email.com", "domain.com", "yourdomain", "yourcompany",
                    "mondomaine", "monsite", "votredomaine", "sentry", "wixpress",
-                   "godaddy", "wordpress.", "@2x")
+                   "godaddy", "wordpress.", "@2x", "duckduckgo", "gstatic",
+                   "googleusercontent", "cloudflare", "schema.org", "w3.org")
 # domaines à ignorer dans la recherche web (annuaires, réseaux sociaux, etc.)
 DOMAIN_BLACKLIST = ("societe.com", "pappers.fr", "infogreffe.fr", "pagesjaunes.fr",
                     "verif.com", "linkedin.com", "facebook.com", "twitter.com", "x.com",
@@ -104,7 +105,13 @@ DOMAIN_BLACKLIST = ("societe.com", "pappers.fr", "infogreffe.fr", "pagesjaunes.f
                     "yelp.", "mappy.", "kompass.com", "manageo.fr", "bodacc", "data.gouv.fr",
                     "indeed.", "glassdoor.", "leboncoin.fr", "score3.fr", "annuaire",
                     "dnb.com", "usinenouvelle.com", "corporama", "ellisphere", "hellowork",
-                    "societeinfo", "pappers", "verif", "figaro", "lefigaro", "bfmtv")
+                    "societeinfo", "pappers", "verif", "figaro", "lefigaro", "bfmtv",
+                    "duckduckgo", "qwant.", "ecosia")
+
+# TLD etrangers : un email en .nl/.de sur une boite FR = souvent un partenaire scrappe
+FOREIGN_TLDS = (".nl", ".de", ".es", ".it", ".be", ".pt", ".pl", ".ch", ".at",
+                ".dk", ".se", ".no", ".fi", ".cz", ".ru", ".cn", ".jp", ".in",
+                ".ie", ".lu", ".gr", ".ro", ".hu", ".tr")
 
 EFFECTIF_LABELS = {
     "NN": "non employeur", "00": "0 salarié", "01": "1-2", "02": "3-5",
@@ -150,11 +157,26 @@ def is_placeholder(email):
 
 
 def norm_phone(s):
-    d = re.sub(r"[^\d+]", "", s)
-    digits = re.sub(r"\D", "", d)
-    if len(set(digits)) <= 1:      # 0000000000 etc.
+    """Normalise en numero francais national valide (0X XX XX XX XX), sinon "".
+    Rejette les indicatifs etrangers, les numeros malformes et les faux evidents."""
+    d = re.sub(r"\D", "", s or "")
+    if not d:
         return ""
-    return d
+    if d.startswith("0033"):                       # 0033XXXXXXXXX
+        d = "0" + d[4:]
+    elif d.startswith("330") and len(d) == 12:      # +33 0XXXXXXXXX (0 en trop)
+        d = d[2:]
+    elif d.startswith("33") and len(d) == 11:       # +33 XXXXXXXXX
+        d = "0" + d[2:]
+    if d.startswith("00"):                          # autre indicatif etranger
+        return ""
+    if not d.startswith("0"):
+        return ""
+    if len(d) != 10 or d[1] == "0":                 # 10 chiffres, 2e chiffre 1-9
+        return ""
+    if len(set(d)) <= 2 or d[1:] == "123456789":    # faux / repetitif / sequentiel
+        return ""
+    return " ".join((d[0:2], d[2:4], d[4:6], d[6:8], d[8:10]))
 
 
 def get_json(url, params=None, headers=None, timeout=15, retries=3):
@@ -499,7 +521,9 @@ def parse_page(text, domain):
             pass
     emails = {e for e in emails
               if not e.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"))
-              and not is_placeholder(e)}
+              and not is_placeholder(e)
+              and not (e.rsplit("@", 1)[-1].endswith(FOREIGN_TLDS)
+                       and e.rsplit("@", 1)[-1] != domain)}
     return emails, phones, linkedin
 
 
@@ -776,6 +800,14 @@ def score_company(c, cfg):
 # --------------------------------------------------------------------------- #
 #  5. État et sorties
 # --------------------------------------------------------------------------- #
+def ensure_file(path, header):
+    """Cree le fichier avec son en-tete s'il manque (repart propre si data/ vide)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if not os.path.exists(path):
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(header)
+
+
 def load_set(path, col):
     s = set()
     if os.path.exists(path):
@@ -788,6 +820,7 @@ def load_set(path, col):
 
 
 def append_seen(path, sirens):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     exists = os.path.exists(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
@@ -936,6 +969,8 @@ def main():
         log("  Aucune entreprise : vérifie les codes NAF / la zone dans config.yml")
         return
 
+    ensure_file("data/seen.csv", ["siren", "date_ajout"])
+    ensure_file("data/suppression.csv", ["siren", "email", "raison", "date"])
     seen = load_set("data/seen.csv", "siren")
     supp_siren = load_set("data/suppression.csv", "siren")
     supp_email = load_set("data/suppression.csv", "email")

@@ -38,6 +38,15 @@ uniquement. France entiere. Tout se regle dans `config.yml`.
   entreprises) et sert uniquement a personnaliser le message.
 - Verification MX du domaine avant tout envoi.
 
+## Votre entreprise figure dans cette base ?
+
+Ce depot est public. Si vous souhaitez retirer votre entreprise : ouvrez une
+issue avec votre SIREN ou votre domaine. La ligne sera ajoutee a
+`data/optout.csv` et la fiche disparaitra de la base, du CRM et de toute
+sortie future des le run suivant. Aucune justification demandee. Les emails
+collectes sont exclusivement des adresses generiques publiees sur votre
+propre site (jamais d'adresse nominative construite).
+
 ## Opt-out RGPD : `data/optout.csv`
 
 Une seule source de verite pour les demandes de suppression. Colonnes :
@@ -107,6 +116,10 @@ chaque regeneration (fusion par SIREN). Statuts : a contacter, contacte,
 relance, interesse, rdv, client, refuse, injoignable, hors cible.
 Produits : POC, Abonnement, Deploiement, Formation (la formation ne
 commissionne pas).
+
+NB depot public : les colonnes de suivi committees dans `crm/` (statuts,
+notes, montants, commissions) sont visibles de tous. Garde les notes neutres,
+ou travaille le suivi dans une copie locale du CSV.
 
 ## Fichiers
 

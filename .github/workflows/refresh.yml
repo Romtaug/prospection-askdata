@@ -1,0 +1,60 @@
+name: Build base askdata
+
+# Construit la base complete depuis SIRENE (API publique recherche-entreprises),
+# la COMMIT dans data/ et la publie aussi en artefact.
+# - Planifie : le 1er de chaque mois.
+# - Manuel   : possibilite de restreindre a quelques departements.
+# L'enrichissement (emails, scraping des sites) n'est PAS lance ici : voir enrich.yml.
+# Les entreprises de data/optout.csv sont ecartees des la collecte.
+#
+# /!\ Le commit necessite les droits d'ecriture du workflow :
+#     Settings > Actions > General > Workflow permissions > "Read and write permissions".
+
+on:
+  schedule:
+    - cron: "0 3 1 * *"        # 1er du mois, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      departements:
+        description: "Departements ex '69 38 01' (vide = France entiere)"
+        required: false
+
+permissions:
+  contents: write              # necessaire pour committer le CSV dans le repo
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      # Collecte SIRENE (API). Filtres NAF + effectifs pris dans config.yml.
+      - name: SIRENE (API)
+        run: python sirene_api.py ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
+
+      - name: Commit du CSV dans data/
+        run: |
+          mkdir -p data
+          cp sirene_askdata.csv data/base_askdata.csv
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f data/base_askdata.csv
+          if git diff --staged --quiet; then
+            echo "Base inchangee, rien a committer."
+          else
+            git commit -m "Refresh base askdata ($(date -u +%Y-%m-%d))"
+            git pull --rebase origin main || true
+            git push
+          fi
+
+      - name: Publier aussi en artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: base_askdata
+          path: sirene_askdata.csv
+          if-no-files-found: error

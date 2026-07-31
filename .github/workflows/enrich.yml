@@ -1,0 +1,125 @@
+name: Enrichissement base askdata
+
+# Enrichit la base ENTIEREMENT via GitHub, avec reprise automatique.
+#  - phase 0 : purge opt-out (les lignes de data/optout.csv disparaissent)
+#  - phase 1 : fiche officielle (API) des lignes pas encore traitees
+#  - phase 2 : contacts web (site, email generique, LinkedIn) des lignes fichees
+#
+# Robustesse : enrich.py ecrit un CSV NORMAL (data/base_askdata_enrichi.csv). Une
+# coupure par le minuteur perd au pire la derniere ligne, le fichier reste
+# lisible. La compression .gz ne se fait qu'a l'etape de sauvegarde, en une
+# operation complete, jamais en streaming.
+# L'avancement est stocke sur la branche "enrichi" (data/base_askdata_enrichi.csv.gz,
+# compresse pour la limite GitHub de 100 Mo). Le CSV lisible est publie en artefact.
+#
+# - Planifie : chaque nuit a 01:00 UTC (s'arrete tout seul quand tout est fait).
+# - Manuel   : Run workflow, avec mode / volumes / filtres.
+#
+# NOTE : depuis les IP GitHub, l'API et les sites repondent lentement. La grosse
+# passe fiche est bien plus rapide en local. Rien ne casse ici, c'est juste lent ;
+# la reprise garantit que rien n'est perdu.
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Quelles phases lancer"
+        type: choice
+        options: [complet, fiche, web]
+        default: complet
+      limit:
+        description: "Lignes a ficher ce run (phase 1)"
+        default: "50000"
+      web_limit:
+        description: "Lignes a completer en web ce run (phase 2)"
+        default: "10000"
+      types:
+        description: "Filtre verticales ex 'saas_web comptabilite' (vide = toutes)"
+        required: false
+      departements:
+        description: "Filtre departements ex '69 38 01' (vide = tous)"
+        required: false
+      bodacc:
+        description: "Ajouter les signaux BODACC (phase 1, plus lent)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: enrichissement
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Recuperer l'avancement (branche enrichi) et decompresser
+        run: |
+          mkdir -p data
+          if git fetch origin enrichi 2>/dev/null && git show FETCH_HEAD:data/base_askdata_enrichi.csv.gz > prev.gz 2>/dev/null; then
+            gzip -dc prev.gz > data/base_askdata_enrichi.csv || echo "gz tronque : recuperation partielle des lignes lisibles"
+            rm -f prev.gz
+            echo "avancement recupere : $(( $(wc -l < data/base_askdata_enrichi.csv) - 1 )) lignes"
+          else
+            echo "premier run (aucun avancement a reprendre)"
+          fi
+
+      - name: Phase 1 - fiche officielle (purge opt-out incluse)
+        if: ${{ inputs.mode != 'web' }}
+        timeout-minutes: 200
+        continue-on-error: true
+        run: >
+          python enrich.py --sans-web
+          --limit ${{ inputs.limit || '50000' }}
+          --out data/base_askdata_enrichi.csv
+          ${{ inputs.types && format('--types {0}', inputs.types) || '' }}
+          ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
+          ${{ inputs.bodacc && '--bodacc' || '' }}
+
+      - name: Phase 2 - contacts web
+        if: ${{ inputs.mode != 'fiche' }}
+        timeout-minutes: 110
+        continue-on-error: true
+        run: >
+          python enrich.py --completer-web --workers 16
+          --limit ${{ inputs.web_limit || '10000' }}
+          --out data/base_askdata_enrichi.csv
+          ${{ inputs.types && format('--types {0}', inputs.types) || '' }}
+          ${{ inputs.departements && format('--departements {0}', inputs.departements) || '' }}
+
+      - name: Avancement
+        if: ${{ always() }}
+        run: |
+          python enrich.py --stats --out data/base_askdata_enrichi.csv 2> data/enrichi_avancement.txt || true
+          cat data/enrichi_avancement.txt || true
+
+      - name: Sauvegarder sur la branche enrichi
+        if: ${{ always() }}
+        run: |
+          [ -f data/base_askdata_enrichi.csv ] || { echo "rien a sauvegarder"; exit 0; }
+          gzip -c data/base_askdata_enrichi.csv > data/base_askdata_enrichi.csv.gz
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B enrichi
+          git add -f data/base_askdata_enrichi.csv.gz data/enrichi_avancement.txt
+          git commit -m "Enrichissement $(date -u +%F)" || echo "rien a committer"
+          git push -f origin enrichi
+
+      - name: Publier le CSV enrichi en artefact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: base_askdata_enrichi
+          path: data/base_askdata_enrichi.csv
+          if-no-files-found: warn

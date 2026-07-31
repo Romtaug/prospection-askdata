@@ -1,0 +1,89 @@
+name: CRM prospection
+
+# Genere le CRM de prospection au format CSV dans crm/ et le committe sur main.
+#
+# Fonctionnement :
+#  1. recupere la base enrichie depuis la branche "enrichi" (produite chaque nuit
+#     par le workflow d'enrichissement) ; a defaut, utilise la base brute de main ;
+#  2. relit le CRM deja present dans crm/ pour CONSERVER les statuts et notes
+#     deja saisis (fusion par SIREN) ;
+#  3. applique l'opt-out (data/optout.csv) : aucune entreprise exclue ne sort ;
+#  4. reecrit crm/crm_askdata.csv + un fichier par verticale, tries par score.
+#
+# A lancer quand tu veux une version a jour. Programme aussi le lundi matin.
+#
+# /!\ Necessite Settings > Actions > General > Workflow permissions
+#     > "Read and write permissions".
+
+on:
+  schedule:
+    - cron: "30 6 * * 1"          # chaque lundi 06:30 UTC
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Filtre verticales ex 'saas_web comptabilite' (vide = toutes)"
+        required: false
+      tier:
+        description: "Filtre tiers ex 'A B' (vide = tous)"
+        required: false
+      dep:
+        description: "Filtre departements ex '69 38 01' (vide = tous)"
+        required: false
+      min_score:
+        description: "Score minimum (vide = aucun)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: crm
+  cancel-in-progress: false
+
+jobs:
+  crm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4          # recupere aussi le CRM existant (crm/)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Recuperer la base enrichie (branche enrichi)
+        run: |
+          mkdir -p data
+          if git fetch origin enrichi 2>/dev/null && git show FETCH_HEAD:data/base_askdata_enrichi.csv.gz > prev.gz 2>/dev/null; then
+            gzip -dc prev.gz > data/base_askdata_enrichi.csv || echo "gz tronque : recuperation partielle"
+            rm -f prev.gz
+            echo "base enrichie : $(( $(wc -l < data/base_askdata_enrichi.csv) - 1 )) lignes"
+          else
+            echo "pas encore de base enrichie : le CRM sortira depuis la base brute"
+          fi
+
+      - name: Generer le CRM (fichier principal + un CSV par verticale)
+        run: >
+          mkdir -p crm &&
+          python export_crm.py --par-type
+          ${{ inputs.types && format('--types {0}', inputs.types) || '' }}
+          ${{ inputs.tier && format('--tier {0}', inputs.tier) || '' }}
+          ${{ inputs.dep && format('--dep {0}', inputs.dep) || '' }}
+          ${{ inputs.min_score && format('--min-score {0}', inputs.min_score) || '' }}
+          2> crm/resume.txt || (cat crm/resume.txt && exit 1)
+
+      - name: Afficher le resume
+        run: cat crm/resume.txt
+
+      - name: Commit du CRM
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add crm/
+          if git diff --staged --quiet; then
+            echo "CRM inchange, rien a committer."
+          else
+            git commit -m "CRM askdata ($(date -u +%Y-%m-%d))"
+            git pull --rebase origin main || true
+            git push
+          fi

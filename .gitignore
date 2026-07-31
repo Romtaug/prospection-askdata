@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+sirene_askdata.csv
+base_askdata_enrichi.csv
+prev.gz
+*.tmp
+*.tmp.gz

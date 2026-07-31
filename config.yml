@@ -1,0 +1,82 @@
+# =====================================================================
+#  Prospection AskData - configuration
+#  Cible : TPE/PME francaises qui ont de la donnee a exploiter mais pas
+#  de profil data en interne. Ce sont les acheteurs potentiels d'AskData
+#  (BI en langage naturel).
+#  Tout se regle ici, aucune ligne de code a toucher.
+# =====================================================================
+
+# Les 31 codes NAF historiques d'AskData, regroupes en 10 verticales.
+# La verticale sert au filtrage (--types), aux stats et aux CRM par metier :
+# un pitch different par verticale = un fichier CSV par verticale.
+naf:
+  saas_web:         ["62.01Z", "58.29C", "63.12Z"]                                              # editeurs, SaaS, portails internet
+  conseil_it:       ["62.02A", "62.03Z", "62.09Z"]                                              # ESN, infogerance, autres services IT
+  data_etudes:      ["63.11Z", "63.99Z", "73.20Z", "72.19Z"]                                    # traitement de donnees, hebergement, etudes de marche, R&D
+  conseil_gestion:  ["70.22Z", "70.10Z", "71.12B"]                                              # conseil en gestion, sieges sociaux, ingenierie-etudes
+  marketing_com:    ["73.11Z", "73.12Z", "70.21Z"]                                              # agences de pub, regies, relations publiques
+  comptabilite:     ["69.20Z"]                                                                  # experts-comptables (ils tiennent la donnee de leurs clients)
+  ecommerce_negoce: ["47.91A", "47.91B", "46.19B", "46.90Z", "46.51Z", "47.41Z", "45.11Z"]      # e-commerce, negoce, distribution, vehicules
+  logistique:       ["49.41A", "52.29A"]                                                        # fret interurbain, messagerie express
+  immobilier:       ["68.31Z"]                                                                  # agences immobilieres
+  finance_rh:       ["66.22Z", "66.19B", "78.10Z", "82.20Z"]                                    # courtiers assurance, aux. financiers, recrutement, centres d'appels
+
+# Tranches d'effectif salarie INSEE de l'UNITE LEGALE.
+# Codes : 02 = 3-5, 03 = 6-9, 11 = 10-19, 12 = 20-49, 21 = 50-99,
+#         22 = 100-199, 31 = 200-249, 32 = 250-499.
+# En dessous de 3 : pas de budget BI. Au dessus de 499 : equipe data en
+# place, hors cold email. Liste vide = aucun filtre (volume x5 environ,
+# deconseille en France entiere).
+effectifs:
+  defaut: ["02", "03", "11", "12", "21", "22", "31", "32"]     # 3 a 499 salaries
+  par_type: {}                                                 # exceptions possibles, ex: { ecommerce_negoce: ["01","02","03","11","12"] }
+
+# Zone. Liste vide = France entiere. Exemple AURA : ["69", "38", "01", "42", "73", "74"]
+departements: []
+
+# --- Enrichissement (enrich.py) -------------------------------------------
+# REGLE EMAILS : uniquement des adresses GENERIQUES publiees sur le site
+# officiel de l'entreprise (contact@, info@...). Aucune adresse nominative
+# (prenom.nom@) n'est jamais devinee ni construite : donnee personnelle.
+# Le nom du dirigeant vient du registre officiel (annuaire des entreprises),
+# source publique legale, et sert uniquement a personnaliser le message.
+enrichissement:
+  workers: 8
+  timeout_http: 8
+  duckduckgo_fallback: true      # si le domaine devine ne repond pas, chercher le site via DuckDuckGo
+  tlds: ["fr", "com", "io", "net", "co", "eu"]
+  role_prefixes: ["contact", "info", "accueil", "bonjour", "hello", "commercial",
+                  "sales", "administration", "direction", "secretariat", "compta",
+                  "gestion", "support", "sav", "devis", "rh", "agence"]
+  paths_a_scanner: ["/", "/contact", "/nous-contacter", "/contactez-nous",
+                    "/mentions-legales", "/a-propos", "/qui-sommes-nous", "/devis"]
+  domaines_ignores: ["facebook.com", "linkedin.com", "google.", "pagesjaunes",
+                     "societe.com", "pappers", "infogreffe", "youtube", "instagram",
+                     "twitter", "x.com", "wikipedia", "sentry", "wixpress",
+                     "annuaire-", "lannuaire", "tripadvisor", "trustpilot", "indeed",
+                     "glassdoor", "leboncoin", "houzz", "yelp", "mappy", "kompass",
+                     "verif.com", "manageo", "duckduckgo", "qwant.", "ecosia",
+                     "bodacc", "data.gouv.fr", "usinenouvelle", "corporama",
+                     "ellisphere", "hellowork", "societeinfo", "score3", "dnb.com"]
+
+# --- Scoring (0-100, tiers A/B/C) ------------------------------------------
+# Poids herites du scoring AskData d'origine, adaptes au schema tournees.
+scoring:
+  poids_email: 20          # email generique trouve sur le site
+  poids_site: 8            # site trouve mais pas d'email
+  poids_telephone: 10
+  poids_finances: 15       # CA dans la fourchette ideale
+  poids_croissance: 5      # CA en hausse vs N-1
+  poids_effectif: 10       # effectif renseigne et >= 3 salaries
+  poids_categorie: 5       # PME / ETI / GE
+  poids_anciennete: 5
+  poids_dirigeant: 5
+  poids_labels: 5
+  poids_multi_etab: 8      # au moins 2 etablissements ouverts : donnees eclatees multi-sites = besoin BI
+  ca_min_ideal: 300000     # en dessous : pas de budget
+  ca_max_ideal: 20000000   # au dessus : equipe data probablement en place
+  age_min: 2
+  age_max: 30
+  seuil_tier_A: 60
+  seuil_tier_B: 40
+  penalite_distress: 100   # procedure collective / radiation => tier "exclu"

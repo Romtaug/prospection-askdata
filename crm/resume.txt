@@ -1,0 +1,45 @@
+Fusion : 89987 lignes au total, dont 2531 deja fichees (3 %)
+Source : data/base_askdata.csv + data/base_askdata_enrichi.csv (89987 lignes)
+  87455 lignes encore en attente d'enrichissement (elles apparaissent avec les colonnes vides).
+
+CRM ecrit : crm/crm_askdata.csv  (89987 lignes, 81 colonnes, 20902 Ko)
+  crm/crm_askdata_comptabilite.csv  (8957 lignes, 1977 Ko)
+  crm/crm_askdata_conseil_gestion.csv  (25389 lignes, 5993 Ko)
+  crm/crm_askdata_conseil_it.csv  (6172 lignes, 1338 Ko)
+  crm/crm_askdata_data_etudes.csv  (2339 lignes, 571 Ko)
+  crm/crm_askdata_ecommerce_negoce.csv  (14268 lignes, 3662 Ko)
+  crm/crm_askdata_finance_rh.csv  (6455 lignes, 1656 Ko)
+  crm/crm_askdata_immobilier.csv  (7493 lignes, 1590 Ko)
+  crm/crm_askdata_logistique.csv  (7501 lignes, 1818 Ko)
+  crm/crm_askdata_marketing_com.csv  (4476 lignes, 950 Ko)
+  crm/crm_askdata_saas_web.csv  (6937 lignes, 1355 Ko)
+
+--- CRM : 89987 lignes ---
+  fichees              2532  (2.8%)
+  avec email            483  (0.5%)
+  email verifie MX      474
+  avec telephone        486  (0.5%)
+  multi-sites           898
+  tier A                187
+  tier B                699
+  tier C               1646
+  par verticale :
+    conseil_gestion   25389   (tier A : 71)
+    ecommerce_negoce  14268   (tier A : 29)
+    comptabilite       8957   (tier A : 11)
+    logistique         7501   (tier A : 8)
+    immobilier         7493   (tier A : 10)
+    saas_web           6937   (tier A : 15)
+    finance_rh         6455   (tier A : 20)
+    conseil_it         6172   (tier A : 16)
+    marketing_com      4476   (tier A : 4)
+    data_etudes        2339   (tier A : 3)
+  suivi commercial :
+    a contacter     89987
+
+Statuts autorises   : a contacter | contacte | relance | interesse | rdv | client | refuse | injoignable | hors cible
+Canaux autorises    : email | telephone | linkedin | courrier | visite
+Produits autorises  : POC | Abonnement | Deploiement | Formation
+Livraison autorisee : a faire | en cours | livre
+commission = montant_encaisse x 40%, sauf formation (0 %). Recalculee a chaque export.
+Genere le 03/08/2026

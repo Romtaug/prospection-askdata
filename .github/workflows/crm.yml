@@ -10,6 +10,10 @@ name: CRM prospection
 #  3. applique l'opt-out (data/optout.csv) : aucune entreprise exclue ne sort ;
 #  4. reecrit crm/crm_askdata.csv + un fichier par verticale, tries par score.
 #
+# L'agrege est committe compresse (crm/crm_askdata.csv.gz) : en clair il
+# depasse les 100 Mo par fichier autorises par GitHub et le push est rejete.
+# Pour le relire :  gzip -dc crm/crm_askdata.csv.gz > crm_askdata.csv
+#
 # A lancer quand tu veux une version a jour. Programme aussi le lundi matin.
 #
 # /!\ Necessite Settings > Actions > General > Workflow permissions
@@ -77,13 +81,17 @@ jobs:
 
       - name: Commit du CRM
         run: |
+          # L'agrege depasse la limite dure de 100 Mo par fichier de GitHub.
+          # gzip -9 le ramene autour de 16 Mo et supprime le .csv d'origine.
+          # Les fichiers par verticale restent en CSV brut, lisibles sur GitHub.
+          gzip -9 -f crm/crm_askdata.csv
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add crm/
+          git add -A crm/          # -A : prend aussi la suppression de l'ancien .csv
           if git diff --staged --quiet; then
             echo "CRM inchange, rien a committer."
           else
             git commit -m "CRM askdata ($(date -u +%Y-%m-%d))"
-            git pull --rebase origin main || true
+            git pull --rebase --autostash origin main
             git push
           fi

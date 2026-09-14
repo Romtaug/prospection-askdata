@@ -1,45 +1,44 @@
-Fusion : 89987 lignes au total, dont 22876 deja fichees (25 %)
-Source : data/base_askdata.csv + data/base_askdata_enrichi.csv (89987 lignes)
-  67110 lignes encore en attente d'enrichissement (elles apparaissent avec les colonnes vides).
+Fusion : 81977 lignes au total, dont 81927 deja fichees (100 %)
+Source : data/base_askdata.csv + data/base_askdata_enrichi.csv (81977 lignes)
 
-CRM ecrit : crm/crm_askdata.csv  (89987 lignes, 81 colonnes, 42050 Ko)
-  crm/crm_askdata_comptabilite.csv  (8957 lignes, 4186 Ko)
-  crm/crm_askdata_conseil_gestion.csv  (25389 lignes, 12015 Ko)
-  crm/crm_askdata_conseil_it.csv  (6172 lignes, 2535 Ko)
-  crm/crm_askdata_data_etudes.csv  (2339 lignes, 1139 Ko)
-  crm/crm_askdata_ecommerce_negoce.csv  (14268 lignes, 7118 Ko)
-  crm/crm_askdata_finance_rh.csv  (6455 lignes, 3322 Ko)
-  crm/crm_askdata_immobilier.csv  (7493 lignes, 3430 Ko)
-  crm/crm_askdata_logistique.csv  (7501 lignes, 3656 Ko)
-  crm/crm_askdata_marketing_com.csv  (4476 lignes, 1869 Ko)
-  crm/crm_askdata_saas_web.csv  (6937 lignes, 2789 Ko)
+CRM ecrit : crm/crm_askdata.csv  (81977 lignes, 81 colonnes, 103608 Ko)
+  crm/crm_askdata_comptabilite.csv  (8234 lignes, 10350 Ko)
+  crm/crm_askdata_conseil_gestion.csv  (22993 lignes, 29426 Ko)
+  crm/crm_askdata_conseil_it.csv  (5602 lignes, 7068 Ko)
+  crm/crm_askdata_data_etudes.csv  (2128 lignes, 2750 Ko)
+  crm/crm_askdata_ecommerce_negoce.csv  (13129 lignes, 16801 Ko)
+  crm/crm_askdata_finance_rh.csv  (5943 lignes, 7479 Ko)
+  crm/crm_askdata_immobilier.csv  (6786 lignes, 8326 Ko)
+  crm/crm_askdata_logistique.csv  (6849 lignes, 8625 Ko)
+  crm/crm_askdata_marketing_com.csv  (4071 lignes, 5079 Ko)
+  crm/crm_askdata_saas_web.csv  (6242 lignes, 7712 Ko)
 
---- CRM : 89987 lignes ---
-  fichees             22877  (25.4%)
-  avec email           4561  (5.1%)
-  email verifie MX     4446
-  avec telephone       4611  (5.1%)
-  multi-sites          6763
-  tier A               1635
-  tier B               6009
-  tier C              15222
+--- CRM : 81977 lignes ---
+  fichees             81977  (100.0%)
+  avec email           4741  (5.8%)
+  email verifie MX     4623
+  avec telephone       4788  (5.8%)
+  multi-sites         22731
+  tier A               1741
+  tier B              20952
+  tier C              59258
   par verticale :
-    conseil_gestion   25389   (tier A : 618)
-    ecommerce_negoce  14268   (tier A : 185)
-    comptabilite       8957   (tier A : 78)
-    logistique         7501   (tier A : 54)
-    immobilier         7493   (tier A : 110)
-    saas_web           6937   (tier A : 179)
-    finance_rh         6455   (tier A : 87)
-    conseil_it         6172   (tier A : 189)
-    marketing_com      4476   (tier A : 86)
-    data_etudes        2339   (tier A : 49)
+    conseil_gestion   22993   (tier A : 650)
+    ecommerce_negoce  13129   (tier A : 194)
+    comptabilite       8234   (tier A : 79)
+    logistique         6849   (tier A : 55)
+    immobilier         6786   (tier A : 114)
+    saas_web           6242   (tier A : 206)
+    finance_rh         5943   (tier A : 90)
+    conseil_it         5602   (tier A : 206)
+    marketing_com      4071   (tier A : 91)
+    data_etudes        2128   (tier A : 56)
   suivi commercial :
-    a contacter     89987
+    a contacter     81977
 
 Statuts autorises   : a contacter | contacte | relance | interesse | rdv | client | refuse | injoignable | hors cible
 Canaux autorises    : email | telephone | linkedin | courrier | visite
 Produits autorises  : POC | Abonnement | Deploiement | Formation
 Livraison autorisee : a faire | en cours | livre
 commission = montant_encaisse x 40%, sauf formation (0 %). Recalculee a chaque export.
-Genere le 31/08/2026
+Genere le 14/09/2026

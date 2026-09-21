@@ -41,4 +41,4 @@ Canaux autorises    : email | telephone | linkedin | courrier | visite
 Produits autorises  : POC | Abonnement | Deploiement | Formation
 Livraison autorisee : a faire | en cours | livre
 commission = montant_encaisse x 40%, sauf formation (0 %). Recalculee a chaque export.
-Genere le 14/09/2026
+Genere le 21/09/2026
